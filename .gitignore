@@ -49,3 +49,4 @@ next-env.d.ts
 
 # KRX Data Marketplace 원본. 재배포 제한이 있어 저장소에 넣지 않는다.
 /data/krx-csv/
+.netlify/
