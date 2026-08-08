@@ -124,6 +124,7 @@ export default function Dashboard() {
   // 기간 모드. 비어 있으면 단일 기준일, 채우면 [fromDate, date] 범위로 검색한다.
   const [fromDate, setFromDate] = useState('');
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get('tab');
@@ -146,8 +147,28 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    fetch('/api/status').then((r) => r.json()).then(setStatus).catch(() => setStatus(null));
-    fetch('/api/catalog').then((r) => r.json()).then(setCatalog).catch(() => setCatalog(null));
+    // 서버가 500 을 줘도 본문이 JSON 이면 파싱은 성공한다.
+    // 상태코드와 error 필드를 함께 봐야 잘못된 값이 state 로 들어가지 않는다.
+    const load = async <T,>(path: string): Promise<T> => {
+      const res = await fetch(path);
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body || typeof body.error === 'string') {
+        throw new Error(body?.error ?? `${path} 응답 ${res.status}`);
+      }
+      return body as T;
+    };
+
+    void Promise.all([load<Status>('/api/status'), load<Catalog>('/api/catalog')])
+      .then(([st, cat]) => {
+        setStatus(st);
+        setCatalog(cat);
+        setLoadError(null);
+      })
+      .catch((e: unknown) => {
+        setStatus(null);
+        setCatalog(null);
+        setLoadError(e instanceof Error ? e.message : '데이터를 불러오지 못했어요');
+      });
   }, []);
 
   const lastDay = String(status?.counts?.last_trading_day ?? '');
@@ -226,8 +247,8 @@ export default function Dashboard() {
       </header>
 
       <div className="mx-auto max-w-[1720px] space-y-4 px-5 py-5">
-        <KpiRow status={status} catalog={catalog} />
-        {!date || !catalog ? (
+        {loadError ? <LoadError message={loadError} /> : <KpiRow status={status} catalog={catalog} />}
+        {loadError ? null : !date || !catalog ? (
           <Skeleton />
         ) : tab === 'flow' ? (
           <FlowTab date={date} fromDate={fromDate} catalog={catalog} status={status} />
@@ -267,7 +288,7 @@ function KpiRow({ status, catalog }: { status: Status | null; catalog: Catalog |
     fetch('/api/series').then((r) => r.json()).then((d) => setSeries(d.rows ?? [])).catch(() => setSeries([]));
   }, []);
 
-  if (!status) {
+  if (!status?.runs || !status.counts) {
     return (
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-[2fr_1fr]">
         <div className="panel p-4">
@@ -384,6 +405,30 @@ function KpiRow({ status, catalog }: { status: Status | null; catalog: Catalog |
           <span>수급 원천 {catalog.kis.configured ? `KIS ${catalog.kis.paper ? '모의' : '실전'}` : '미설정'}</span>
         )}
         {failed.length > 0 && <span className="text-warn">수집 실패 {failed.map((f) => f.step).join(', ')}</span>}
+      </div>
+    </section>
+  );
+}
+
+function LoadError({ message }: { message: string }) {
+  const dbDown = /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|connect /i.test(message);
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <div>
+          <h2 className="panel-title">데이터를 불러오지 못했어요</h2>
+          <p className="panel-desc">
+            {dbDown
+              ? '데이터베이스에 연결할 수 없어요. 서버 설정을 확인해 주세요.'
+              : '잠시 후 다시 시도해 주세요.'}
+          </p>
+        </div>
+        <button onClick={() => window.location.reload()} className="btn btn-ghost shrink-0">
+          다시 시도
+        </button>
+      </div>
+      <div className="panel-body">
+        <p className="sunken px-3 py-2 text-[12px] text-faint">{message}</p>
       </div>
     </section>
   );
