@@ -1,0 +1,48 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files. 실제 값이 든 .env.local 은 절대 커밋하지 않는다(KIS·DART 키).
+# 다만 어떤 변수가 필요한지 알려주는 템플릿은 저장소에 있어야 한다.
+.env*
+!.env.example
+
+# vercel
+.vercel
+
+# 로컬 DB. PGlite 데이터 디렉터리는 %LOCALAPPDATA% 에 두지만,
+# 예전 경로로 만들어진 것이 남아 있을 수 있어 함께 막는다.
+/.data/
+/pgdata/
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts

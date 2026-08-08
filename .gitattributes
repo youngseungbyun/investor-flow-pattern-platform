@@ -1,0 +1,14 @@
+# 저장소 안에서는 항상 LF 로 보관한다.
+# Windows 작업 디렉터리는 CRLF 로 체크아웃돼도 되지만, 커밋 내용이 줄바꿈만
+# 바뀌어 통째로 diff 로 잡히는 일을 막는다.
+* text=auto eol=lf
+
+# 바이너리로 다뤄야 하는 것들
+*.ico binary
+*.png binary
+*.jpg binary
+*.woff2 binary
+*.pdf binary
+
+# 생성물이라 리뷰 대상이 아니다. GitHub 에서 diff 를 접어 둔다.
+package-lock.json linguist-generated=true -diff
