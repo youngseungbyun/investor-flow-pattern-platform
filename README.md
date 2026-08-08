@@ -1,245 +1,170 @@
-# 수급·패턴 분석 플랫폼
+# Investor Flow · Pattern Platform
 
-장 마감 후 배치로 데이터를 모아 세 갈래로 분석한다.
+국내 주식의 **투자자별 수급**을 **차트 패턴의 현재 위치**와 겹쳐서 조건 검색하는 리서치 도구입니다.
 
-| 탭 | 하는 일 |
+"사모펀드가 유통주식수의 1% 이상 사들였는데, 그게 역헤드앤숄더 형성 구간 안이고, 지금 넥라인 부근이거나 돌파 후 눌림목인 종목"처럼 **수급과 기술적 위치를 동시에 거는 질문**에 답하려고 만들었습니다. 수급만 보는 도구나 패턴만 보는 도구는 많지만, 둘을 교집합으로 거는 도구가 없어서 직접 만들었습니다.
+
+![수급분석 화면](docs/screen-flow.png)
+
+## 무엇을 하는가
+
+### 1. 수급분석
+
+주체 12구분(개인, 외국인, 기타외국인, 기관합계, 금융투자, 보험, 투신, **사모**, 은행, 기타금융, 연기금, 기타법인)을 각각 조건으로 걸 수 있습니다. 조건은 세 축을 AND로 묶습니다.
+
+| 축 | 예시 |
 |---|---|
-| **수급분석** | 투자자 12구분 × 지표 × 임계값 × 패턴 위치를 조합한 **조건 빌더**로 종목을 뽑는다 |
-| **패턴분석** | 상승 8 / 하락 6 / 중립 2, 총 **16종 패턴**과 현재 단계(넥라인 부근·돌파·눌림목)를 보여준다 |
-| **라인분석** | 변곡점 지지선, 거래량 돌파 후 눌림목, 3·5일선 지지를 리스트업한다 |
+| 수급 | 사모, 순매수, 유통주식수 대비 0.5% 이상, 패턴 기간 중, 하루 최대 |
+| 패턴 위치 | 역헤드앤숄더 또는 컵앤핸들이면서 현재 단계가 돌파선 부근 또는 눌림목 |
+| 라인 시그널 | 거래량 돌파 후 눌림목, 3·5일 이평선 지지 |
 
-대표 조건 예시는 이렇게 표현된다.
+조건에 맞는 종목이 없으면 **그 기간의 실제 최대값과 상위 1% 기준선을 함께 알려줍니다.** 임계값이 현실과 얼마나 떨어져 있는지 모르면 조건을 고칠 수 없기 때문입니다.
 
-> 사모펀드가 하루에 유통주식수의 1% 이상 순매수한 날이 역헤드앤숄더 또는 컵앤핸들 패턴 기간 안에 있고,
-> 지금은 넥라인 부근이거나 돌파 후 눌림목인 종목
+### 2. 패턴분석
 
----
+![패턴분석 화면](docs/screen-pattern.png)
 
-## 데이터 소스 현황 (2026-08 기준 실측)
+StockCharts ChartSchool 분류를 기준으로 일봉에서 기하학적으로 판정 가능한 16종을 구현했습니다.
 
-| 데이터 | 소스 | 상태 |
+| 방향 | 패턴 |
+|---|---|
+| 상승 8종 | 역헤드앤숄더, 쌍바닥, 삼중바닥, 원형바닥, 하락쐐기, 컵앤핸들, 상승삼각형, 상승깃발 |
+| 하락 6종 | 헤드앤숄더, 쌍고점, 삼중천장, 상승쐐기, 하락삼각형, 하락깃발 |
+| 중립 2종 | 대칭삼각형, 박스권 |
+
+**"패턴이 있다"만으로는 쓸모가 없습니다.** 지금 그 패턴의 어디에 있는지가 판단의 재료이므로, 모든 적중에 단계를 함께 판정합니다.
+
+| 단계 | 뜻 |
+|---|---|
+| 형성중 | 구조는 성립하나 돌파선에서 멀다 |
+| 돌파선 부근 | 넥라인·돌파선 ±3% 안 |
+| 돌파 | 돌파 직후 3봉 이내 |
+| 눌림목 | 돌파 후 되돌려 돌파선 부근까지 왔고, 돌파선은 아직 지키고 있다 |
+| 돌파 실패 | 돌파 후 돌파선을 다시 잃었다 |
+
+자동 판정이라 오탐이 섞입니다. 그래서 모든 적중은 **근거**에 실제 수치를 남깁니다. 어깨 대칭도, 컵 깊이, 바닥 체류 봉수, 돌파 거래량 배수, 추세선 R²를 직접 확인하고 판단하시면 됩니다.
+
+### 3. 라인분석
+
+변곡점을 군집화해 지지·저항선을 만들고, 평소 거래량의 1.8배 이상으로 그 선을 돌파한 뒤 되돌아와 아직 지키고 있는 종목을 찾습니다. 3일선·5일선 지지도 함께 봅니다.
+
+### 종목 상세
+
+![종목 상세 화면](docs/screen-stock.png)
+
+일봉 차트 위에 패턴 골격(어깨, 머리, 넥라인, 돌파선)을 겹쳐 그리고, **언제 얼마나 수급이 들어왔는지**를 봉에 화살표로 표시합니다. 지지선 그리기는 저장되어 새로고침해도 남습니다.
+
+프로그램매매 패널은 **프로그램 제외 외국인**을 계산합니다. 외국인 순매수에서 프로그램 순매수를 뺀 값으로, 차익거래가 아닌 실수요 외국인 물량을 근사합니다.
+
+## 데이터 출처
+
+| 데이터 | 출처 | 비고 |
 |---|---|---|
-| **투자자별 12구분(사모 포함) 일별** | **한국투자증권 KIS Open API** `FHPTJ04160001` | **정상. 796종목 검증 완료** |
-| 일봉 OHLCV·거래대금·상장주식수·시총 | DATA.go.kr 금융위원회 주식시세정보 | 정상. 2,872종목/일 (전종목 하루치를 1콜) |
-| 분봉 | KIS `FHKST03010200` | 정상. 단, **최근 세션만** 반환 |
-| 프로그램매매(일별) | KIS `FHPPG04650201` | 정상. 30영업일/콜 |
-| 프로그램매매(분) | KIS `FHPPG04650101` | 최근 수분치 스냅샷만 |
-| 거래원별(증권사 창구) | KIS `FHPST04540000` | 회원사코드별 1건씩 조회 |
-| 내부자(임원) 소유상황 보고 | OpenDART `elestock.json` + `document.xml` | 정상 |
-| corp_code ↔ 종목코드 | OpenDART `corpCode.xml` | 정상. 2,846종목 매핑 |
-| 최대주주등·자기주식 | OpenDART `hyslrSttus` / `tesstkAcqsDspsSttus` | 정상 |
-| 개인·외국인·기관합계 (폴백) | 네이버 증권 모바일 API | 정상. 무료·무로그인 |
-| 차트 시세 공급 | 자체 UDF 서버 `/api/udf/*` | 정상 |
+| 투자자별 수급 12구분 | 한국투자증권 Open API `FHPTJ04160001` | 실전 계좌 초당 15건, 모의 초당 2건. 도메인에 `vts` 포함 여부로 자동 전환 |
+| 일봉 | DATA.go.kr 금융위원회 주식시세정보 | 전 종목을 한 번에. T+1 공시라 당일치는 다음 날 들어온다 |
+| 분봉 | KIS `FHKST03010200` (당일), Yahoo Finance (과거 소급) | provider 폴백. 1분봉은 약 14일, 5분봉은 약 57일까지 |
+| 프로그램매매 | KIS `FHPPG04650101` / `FHPPG04650201` | 장중에만 내려온다 |
+| 임원·주요주주 지분변동 | OpenDART `elestock` + 원문 파싱 | 변동전 + 증감 = 변동후 항등식으로 증감 열을 식별 |
+| 유통주식수 | OpenDART `hyslrSttus`, `tesstkAcqsDspsSttus` | 상장주식수에서 최대주주 소유분과 자기주식을 뺀 실계산. 미확보 종목은 상장주식수로 대체하고 화면에 표시 |
 
-### KIS 가 KRX CSV 를 대체했다
+수급 원천은 `InvestorFlowProvider` 인터페이스 뒤에 있습니다. 환경변수 하나로 갈아끼울 수 있고, 재배포가 제한된 데이터를 쓰는 provider는 라이선스 가드가 걸려 있습니다.
 
-원래 사모 세분은 KRX Data Marketplace 뿐이라고 알려져 있었고, 실제로 `data.krx.co.kr` 통계 화면은
-회원 전용으로 바뀌어 비로그인 `POST /comm/bldAttendant/getJsonData.cmd` 가 `400 LOGOUT` 을 돌려준다.
+> KRX Data Marketplace 데이터는 재배포 제한이 있어 이 저장소에 포함하지 않았습니다. 해당 provider를 쓰시려면 직접 계약 후 내려받아 `data/krx-csv/`에 두시면 됩니다.
 
-그런데 KIS 의 **종목별 투자자매매동향(일별)** `FHPTJ04160001` 이 `pe_fund_ntby_vol`(사모)를 포함한
-**투자자 12구분을 일별로 전부** 준다. 한 번 호출에 30영업일치가 온다.
+## 기술 구성
 
-정확도 검증 (2026-08-07):
+```
+Next.js 15 (App Router, Turbopack) + TypeScript + Tailwind v4
+lightweight-charts (일봉·패턴 오버레이) / recharts (수급 시계열)
+PGlite (PostgreSQL 18 WASM) 소켓 서버 또는 Supabase
+```
 
-| 항목 | KIS | 대조 기준 | 판정 |
-|---|---|---|---|
-| 파마리서치(214450) 사모 순매수 2026-07-27~29 합 | 365,977 | 365,977 (KRX CSV 원본) | 일치 |
-| 같은 종목·기간 개인 순매수 합 | −244,245 | −244,245 (네이버) | 일치 |
+DB는 표준 `pg` 드라이버로 붙습니다. `DATABASE_URL` 만 바꾸면 로컬 PGlite와 Supabase 사이를 오갈 수 있습니다.
 
-그래서 기본 provider 는 `kis` 다. `krx-csv` / `krx-marketplace` 는 폴백으로 남겨 두었다.
+### 디자인 시스템
 
-> **KIS 계정 종류에 따른 차이**
-> 모의(`openapivts…:29443`)는 **초당 2건**, 실전(`openapi…:9443`)은 초당 20건이다.
-> 796종목 수급 수집이 모의로 약 45분, 실전으로 약 5분 걸린다.
-> **과거 일별 데이터는 모의에서도 실데이터**지만, **당일 장중 시세는 모의 서버 값**이라
-> 실시간 분봉·프로그램매매를 쓰려면 실전 계정이 필요하다.
+Meta의 [Astryx](https://astryx.atmeta.com/)에서 규칙을 가져왔습니다. 표면 톤 4단으로 층을 만들고 그림자를 쓰지 않으며, 테두리는 별도 회색이 아니라 전경색의 10% 알파입니다.
 
-> ## ⚠️ KRX Data Marketplace 를 쓸 경우에만 해당
->
-> `krx-csv` / `krx-marketplace` provider 로 되돌린다면, 상용 배포 전 KRX Data Marketplace
-> 이용 계약이 필요하다. 어느 provider 든 **수집한 원본은 재배포하지 않고 파생 지표(비율·순위)만 노출**한다.
-> 요청 간격은 `REQUEST_INTERVAL_MS`(기본 1000ms) 미만으로 낮추지 말 것.
+**UI 액센트는 무채색입니다.** 이 화면에서 적색은 상승·순매수, 청색은 하락·순매도로 이미 예약되어 있어서, UI 액센트에 유채색을 쓰면 "선택됨"과 "하락"이 시각적으로 섞입니다. 금색은 아직 확정이 아닌 상태(넥라인 부근, 유통주식수 추정) 하나에만 씁니다.
 
-`openapi.krx.co.kr`(KRX OPEN API)에는 투자자별 데이터가 없다. `data.krx.co.kr` 과는 다른 서비스다.
+## 시작하기
 
----
-
-## 빠른 시작
+### 1. 설치
 
 ```bash
 npm install
-cp .env.example .env.local     # DATA_GO_KR_API_KEY, OPEN_DART_API_KEY 채우기
-npm run db:server              # 로컬 PostgreSQL(PGlite 소켓 서버). 별도 터미널에서 계속 띄워둔다
-npm run db:migrate
-npm run batch -- ohlcv --date 2026-08-05 --days 220
-npm run batch -- all   --date 2026-08-05
-npm run dev                    # http://localhost:3000
+cp .env.example .env.local
 ```
 
-### DB
+`.env.local`에 키를 채웁니다. 최소한 다음 두 가지가 필요합니다.
 
-기본값은 **PGlite 소켓 서버**다. PostgreSQL 18 을 Docker나 관리자 권한 없이 로컬에서 그대로 쓴다.
-데이터 디렉터리는 OneDrive 밖(`%LOCALAPPDATA%\supply-demand-dashboard\pgdata`)에 둔다. 동기화 충돌을 피하기 위해서다.
-접속은 표준 `pg` 드라이버라 **`DATABASE_URL` 한 줄만 바꾸면 Supabase나 원격 Postgres로 그대로 옮겨간다.**
-마이그레이션 SQL은 순수 PostgreSQL이라 수정 없이 재사용된다.
+| 변수 | 발급처 |
+|---|---|
+| `KIS_APP_KEY`, `KIS_APP_SECRET` | [한국투자증권 KIS Developers](https://apiportal.koreainvestment.com/) |
+| `DATA_GO_KR_KEY` | [공공데이터포털](https://www.data.go.kr/) 금융위원회 주식시세정보 |
+| `DART_API_KEY` (선택) | [OpenDART](https://opendart.fss.or.kr/) 유통주식수 실계산과 임원 매수 교차확인용 |
 
----
-
-## 배치 파이프라인
-
-한국 시장 마감(15:30 KST) 이후 실행한다. 모든 단계는 **멱등**이다.
-
-| 시각 | 단계 | 명령 | 하는 일 |
-|---|---|---|---|
-| 18:00 | ① 일봉 | `batch -- ohlcv` | DATA.go.kr 일봉·거래대금·상장주식수. 거래일 캘린더 확정 |
-| 18:10 | ② 수급 | `batch -- flow` | `InvestorFlowProvider`(기본 kis)로 투자자 12구분. 40종목씩 나눠 저장 |
-| 18:30 | ③④ 공시 | `batch -- dart` | 내부자 보고서 수집·원문 파싱, 유통주식수 계산 |
-| 18:40 | ⑤ 패턴 | `batch -- patterns` | 전 종목 16패턴 스캔 + 단계(stage) 판정 |
-| 18:50 | ⑥ 수급 정규화 | `batch -- flow-events` | 유통주식수 대비 %·평소 거래대금 대비 배수 계산 → `flow_events` |
-| 18:55 | ⑦ 라인 | `batch -- lines` | 변곡점 지지선 · 거래량 돌파 눌림목 · 이평 지지 |
-| 19:00 | ⑧ 스냅샷 | `batch -- screener` | 스크리너 조건 평가 후 스냅샷 확정 |
-| 수시 | 프로그램매매 | `batch -- program --limit 200` | 종목별 프로그램매매 일별 30영업일 |
-| 장중 | 분봉 | `batch -- minute --symbols 005930,000660` | 분봉 + 분봉 프로그램매매 (최근 세션만) |
-
-`batch -- all` 은 ①~⑧을 순서대로 돈다. `program`·`minute` 는 요청량이 많아 별도로 돌린다. 주말·공휴일은 일봉이 비어 있으면 `trading_days.is_open=false` 로 기록하고 건너뛴다.
-각 단계의 성공/실패와 건수는 `batch_runs` 에 남고, 대시보드 상단에 **"마지막 갱신: YYYY-MM-DD HH:mm · 정상/일부실패"** 로 표시된다.
-
-### 관찰 대상(유니버스) 상한
-
-전 종목 × 종목당 1요청은 하루 배치에 들어가지 않는다. 그래서 수급·패턴 단계는
-`FLOW_MIN_TRADED_VALUE`(기본 10억) 이상 종목 중 거래대금 상위 `FLOW_UNIVERSE`(기본 1200)개로 자른다.
-**잘라낸 사실은 콘솔과 `batch_runs.error` 에 `universe=798/2872` 형태로 항상 남긴다.** 조용히 줄이지 않는다.
-
----
-
-## Provider 전환 (환경변수 한 줄)
+### 2. DB 기동과 마이그레이션
 
 ```bash
-INVESTOR_FLOW_PROVIDER=krx-csv,naver     # 앞쪽이 우선, 뒤쪽이 나머지 구분을 채움
+npm run db:server
 ```
 
-| id | 공급 구분 | 조건 |
-|---|---|---|
-| **`kis`** (기본) | **12구분 전부 — 개인·외국인·기타외국인·기관합계·금융투자·보험·투신·사모·은행·기타금융·연기금·기타법인** | `KIS_APP_KEY` / `KIS_APP_SECRET` |
-| `naver` | 개인·외국인·기관합계 | 없음. 항상 사용 가능 |
-| `krx-csv` | 전 구분(내려받은 파일 범위) | `data/krx-csv/` 에 CSV 존재 |
-| `krx-marketplace` | 전 구분 | `KRX_MARKETPLACE_ID` / `_PW`. 미검증 |
-| `licensed` | 전 구분 | `LICENSED_FLOW_API_BASE` / `_KEY` |
+> PGlite 소켓 서버는 **반드시 별도 터미널에서 포그라운드로** 띄우세요. 백그라운드 서브셸로 분리하면 셸이 종료될 때 WAL 플러시 없이 죽어 데이터 디렉터리가 손상됩니다. 복구 도구가 없어 재수집이 유일한 방법입니다.
 
-KIS 금액 필드는 **백만원 단위**로 내려오므로 provider 가 원 단위로 정규화해서 저장한다.
-
-설정이 안 된 provider는 `provider 비활성(설정 부족)` 로 로그를 남기고 건너뛴다.
-현재 어떤 provider가 어떤 값을 공급했는지는 **대시보드 상단 "데이터 출처" 줄에 항상 표기된다.**
-
-### krx-csv 파일 이름 규칙
-
-기간과 투자자 구분을 파일명에서 읽는다. 아래 형식을 모두 인식한다.
-
-```
-26.07.27~26.07.29_사모펀드 순매수 상위 종목.csv
-20260727-20260729_private_fund.csv
-20260805_사모.csv
-```
-
-CP949·UTF-8 자동 판별. 컬럼은 `종목코드, 종목명, 거래량_매도, 거래량_매수, 거래량_순매수, 거래대금_*`.
-시작일과 종료일이 다르면 일별로 위장하지 않고 `investor_flow_period`(기간합계)에 그대로 넣는다.
-스크리너는 이 기간을 프리셋으로 노출하고, 조건 A(개인)도 **같은 구간의 일별 합**으로 맞춰 계산한다.
-
----
-
-## 유통주식수 정의
-
-```
-유통주식수 = 상장주식수 − 최대주주등 소유주식수 − 자기주식
-```
-
-세 값을 다 못 구한 종목은 상장주식수로 대체하되 `instruments.free_float_basis = 'listed_shares'` 로 남기고,
-**UI에 `상장주식수 기준` 배지를 반드시 띄운다.** 조용히 상장주식수를 쓰고 "유통주식수"라고 적지 않는다.
-종목 상세 화면에는 상장주식수·최대주주등·자기주식·유통주식수를 나눠서 보여주고,
-대체된 경우 "이 종목의 비율 지표는 실제보다 작게 나옵니다"를 명시한다.
-
----
-
-## 내부자 매수 판별
-
-- 목록: OpenDART `elestock.json` (임원·주요주주 특정증권등 소유상황보고서)
-- 상세: `document.xml` 원문의 **세부변동내역** 표를 파싱한다.
-  한 행은 `[취득/처분방법 | 변동일 | 증권종류 | 변동전 | 증감 | 변동후 | 단가 | 비고]` 순인데,
-  열 위치를 그대로 믿지 않고 **`변동전 + 증감 = 변동후` 항등식**으로 증감 열을 특정한다.
-- 보고서는 거래일로부터 5영업일 이내 제출이라 공시일과 실제 매수일이 다르다.
-  **반드시 `trade_date`(변동일) 기준으로 매칭**하고, 늦게 잡히는 건은 `enrichPendingReports(sinceDays)` 로 소급 반영한다.
-- 직위가 대표이사·사내이사(등기)인 건만 대상으로 삼고, 취득방법이 장내매수인 건에만 `is_open_market_buy` 를 세운다.
-  유상신주취득·증여 등은 배지를 붙이지 않는다.
-
----
-
-## 차트 패턴
-
-역헤드앤숄더와 컵앤핸들을 좌우 k봉 피벗(기본 k=5) 기반으로 탐지한다.
-각 후보는 **0~100 매칭 점수**와 **조건별 실제 수치(evidence)** 를 함께 저장한다.
-
-오탐이 많은 게 정상이다. 그래서 패턴 탭에서 **점수 임계값을 슬라이더로 조절**할 수 있고,
-행마다 "근거 보기"로 어깨 대칭도·컵 깊이·V자 배제 봉수·돌파일 거래량 배수 같은 실제 값을 펼쳐 볼 수 있다.
-종목 상세 차트에서는 패턴 골격(왼쪽 어깨·머리·오른쪽 어깨, 넥라인)이 캔들 위에 겹쳐 표시된다.
-
----
-
-## 차트와 도형 저장
-
-요구사항은 TradingView **Charting Library(Advanced Charts)** 다. 무료지만 신청·승인을 받아야 저장소에 접근할 수 있고,
-시세는 UDF 프로토콜로 직접 공급해야 한다. 무료 위젯(`s3.tradingview.com/tv.js`)은 저장이 안 되므로 쓰지 않았다.
-
-승인 전에 개발이 막히지 않도록 아래 순서로 만들어 두었다.
-
-1. **UDF 서버** `/api/udf/config`, `/symbols`, `/search`, `/history`, `/time` 이 우리 DB의 국내 일봉을 공급한다.
-2. **도형 저장 API** `GET|PUT /api/drawings?symbol=` 가 `chart_drawings(user_id, symbol, payload_json)` 에 사용자별 도형 JSON을 넣는다.
-   `save_load_adapter` 가 쓸 계약과 같다.
-3. **렌더러**는 지금 당장 동작하는 lightweight-charts로 그렸다. 수평 지지선·추세선을 긋고 새로고침해도 복원된다.
-
-승인 후에는 `src/components/PriceChart.tsx` 만 Charting Library 위젯으로 갈아끼우고
-`NEXT_PUBLIC_TV_LIBRARY_PATH` 를 설정하면 된다. UDF·도형 저장 경로는 그대로 재사용한다.
-
----
-
-## 하지 않는 것
-
-- 종목 추천, 매수·매도 지시, 목표가 제시를 하지 않는다. **사실과 순위만 보여준다.**
-- 수익률을 보장하거나 예측하지 않는다.
-- 검증되지 않은 수치를 화면에 넣지 않는다. 값이 없으면 "데이터 없음"으로 표시한다.
-- 유통주식수를 못 구했는데 구한 척하지 않는다.
-- 패턴 결과를 근거 없이 단정하지 않는다. 점수와 수치를 함께 보여준다.
-- 자동 주문·실거래 연동 기능은 만들지 않는다.
-
----
-
-## 주요 테이블
-
-```
-instruments(symbol, name, market, listed_shares, major_holder_shares, treasury_shares,
-            free_float_shares, free_float_basis, corp_code)
-trading_days(date, is_open)
-ohlcv_daily(symbol, date, o, h, l, c, volume, traded_value, market_cap)
-investor_flow_daily(symbol, date, investor_type, net_buy_qty, net_buy_amount, source)
-investor_flow_period(symbol, start_date, end_date, investor_type, net_buy_qty, source)
-member_flow_daily(symbol, date, member_name, buy_qty, sell_qty)
-insider_reports(rcept_no, symbol, disclosed_at, position, change_qty, detail_status)
-insider_trades(rcept_no, symbol, trade_date, disclosed_at, change_qty, method, is_open_market_buy)
-pattern_hits(symbol, date, pattern, score, evidence_json, confirmed)
-screener_snapshots(date, params_hash, params_json, rows_json)
-chart_drawings(user_id, symbol, payload_json)
-chart_layouts(user_id, client_id, name, content)   -- TradingView save_load_adapter 용
-batch_runs(date, step, status, row_count, error, provider)
-```
-
-인증키는 **서버에서만** 읽는다. `NEXT_PUBLIC_` 에 넣지 않는다.
-
----
-
-## 검증
+다른 터미널에서:
 
 ```bash
-npm run typecheck && npm run build
-npm run verify -- --date 2026-08-05 --n 5
+npm run migrate
 ```
 
-`verify` 는 스크리너를 실제로 돌려 조건 A·B 충족 여부와 정렬이 내림차순인지를 원본 수치로 출력한다.
+### 3. 데이터 수집
+
+```bash
+npm run batch -- ohlcv --date 2026-08-06 --days 220
+npm run batch -- flow --date 2026-08-06 --lookback 30
+npm run batch -- dart --date 2026-08-06
+npm run batch -- patterns --date 2026-08-06
+npm run batch -- lines --date 2026-08-06
+npm run batch -- flow-events --date 2026-08-06
+```
+
+`--date`를 넘기지 않으면 오늘로 잡히고, 오늘 일봉이 아직 없으면 대상이 0건이 됩니다. 기준일은 항상 명시하세요.
+
+한 번에 돌리려면:
+
+```bash
+npm run batch -- all --date 2026-08-06
+```
+
+### 4. 실행
+
+```bash
+npm run dev
+```
+
+`.env.local`을 고친 뒤에는 개발 서버를 **재시작**해야 합니다. 그냥 두면 워커가 죽으면서 모든 API가 500을 반환합니다.
+
+## 보안
+
+공개 저장소이므로 키가 섞여 들어가는 사고를 사람의 주의력에 맡기지 않습니다. `.githooks/pre-commit`이 커밋 자체를 차단합니다.
+
+```bash
+git config core.hooksPath .githooks
+```
+
+클론한 뒤 위 한 줄을 실행하면 활성화됩니다. 훅이 잡는 것:
+
+- `.env` 계열 파일 스테이징 (`.env.example`만 허용)
+- KIS App Key 형태(`PS` + 영숫자 30자 이상)와 긴 base64 시크릿
+- 코드에 하드코딩된 `apiKey`, `secret`, `token` 대입문
+- `NEXT_PUBLIC_` 에 붙은 `KEY`, `SECRET`, `TOKEN` 이름
+- 클라이언트 컴포넌트에서 서버 전용 환경변수를 읽는 코드
+
+`NEXT_PUBLIC_` 값은 클라이언트 번들에 그대로 실려 누구나 볼 수 있습니다. 이 저장소의 모든 API 키는 서버 라우트와 배치 스크립트에서만 읽습니다.
+
+## 면책
+
+이 도구는 **수집한 데이터의 사실과 순위만 보여줍니다.** 종목 추천, 매매 지시, 목표가 제시를 하지 않으며, 수익률을 보장하거나 예측하지 않습니다. 패턴 판정은 자동화된 기하학적 근사이며 오탐을 포함합니다. 투자 판단과 그 결과에 대한 책임은 전적으로 이용자 본인에게 있습니다.
+
+데이터 제공처의 이용약관과 재배포 정책은 각자 확인하고 준수하셔야 합니다.

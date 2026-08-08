@@ -1,0 +1,73 @@
+#!/bin/sh
+#
+# 커밋에 비밀키가 섞여 들어가는 것을 막는다.
+# 사람이 매번 기억하는 대신 커밋 자체를 실패시킨다.
+#
+# 설치: git config core.hooksPath .githooks
+#      (저장소를 클론한 사람도 이 한 줄만 실행하면 된다)
+#
+# 우회가 꼭 필요하면 git commit --no-verify 지만, 공개 저장소에서는 쓰지 말 것.
+
+fail() {
+  printf '\n[pre-commit] 커밋을 중단했습니다.\n  %s\n\n' "$1" >&2
+  exit 1
+}
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
+
+# ── 1) .env 파일 자체가 올라가는지. .env.example 만 허용한다.
+for f in $staged; do
+  case "$f" in
+    .env.example) ;;
+    *.env|.env|.env.*|*/.env|*/.env.*)
+      fail "환경변수 파일이 스테이징됐습니다: $f
+  실제 값이 들어 있을 수 있습니다. git restore --staged \"$f\" 로 빼세요." ;;
+  esac
+done
+
+# ── 2) 스테이징된 '내용'에서 실제 키 형태를 찾는다.
+#      파일명이 아니라 커밋될 내용을 본다. 주석에 붙여넣은 키도 잡힌다.
+blob=$(git diff --cached --diff-filter=ACMR -U0 | grep '^+' | grep -v '^+++')
+
+# 한국투자증권 App Key: PS + 영숫자 30자 이상
+if printf '%s' "$blob" | grep -qE '\bPS[A-Za-z0-9]{30,}'; then
+  fail "KIS App Key 로 보이는 문자열이 있습니다. .env.local 로 옮기세요."
+fi
+
+# 한국투자증권 Secret: base64 80자 이상 + '=' 로 끝남
+if printf '%s' "$blob" | grep -qE '[A-Za-z0-9+/]{80,}={1,2}'; then
+  fail "긴 base64 비밀키로 보이는 문자열이 있습니다. .env.local 로 옮기세요."
+fi
+
+# 흔한 키 대입문. process.env 참조와 예시 자리표시자는 통과시킨다.
+if printf '%s' "$blob" \
+  | grep -viE 'process\.env|import\.meta\.env|EXAMPLE|PLACEHOLDER|YOUR_|<[a-z_]+>|\.\.\.' \
+  | grep -qE '(api[_-]?key|apikey|secret|password|passwd|access[_-]?token|private[_-]?key)[[:space:]]*[:=][[:space:]]*["'"'"'][A-Za-z0-9+/_-]{16,}'; then
+  fail "코드에 키가 하드코딩된 것으로 보입니다. process.env 로 읽도록 바꾸세요."
+fi
+
+# ── 3) NEXT_PUBLIC_ 은 번들에 그대로 실려 브라우저에서 보인다.
+#      여기에 비밀 성격 이름이 붙는 순간 사고다.
+if printf '%s' "$blob" | grep -qE 'NEXT_PUBLIC_[A-Z0-9_]*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)'; then
+  fail "NEXT_PUBLIC_ 에 비밀키를 넣으려 하고 있습니다.
+  이 값은 클라이언트 번들에 그대로 실려 누구나 볼 수 있습니다. 서버 전용 변수로 바꾸세요."
+fi
+
+# ── 4) 클라이언트 컴포넌트에서 서버 전용 환경변수를 읽는지.
+#      'use client' 파일에서 process.env 를 쓰면 NEXT_PUBLIC_ 이 아닌 값은
+#      undefined 가 되거나, 잘못 설정하면 번들에 섞인다.
+for f in $staged; do
+  case "$f" in
+    *.tsx|*.ts)
+      if [ -f "$f" ] && head -3 "$f" | grep -q "use client"; then
+        if grep -oE 'process\.env\.[A-Z0-9_]+' "$f" | grep -qv 'NEXT_PUBLIC_'; then
+          fail "클라이언트 컴포넌트가 서버 전용 환경변수를 읽습니다: $f
+  서버 라우트로 옮기거나 NEXT_PUBLIC_ 로 노출해도 되는 값인지 확인하세요."
+        fi
+      fi
+      ;;
+  esac
+done
+
+exit 0
