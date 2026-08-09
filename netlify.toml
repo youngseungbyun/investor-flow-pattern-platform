@@ -8,12 +8,15 @@
 # 이 파일은 공개 저장소에 커밋되므로 값이 들어가면 그대로 노출된다.
 
 [build]
-  command = "npm run build"
+  # 스키마는 배포 때 만든다. Netlify DB 의 접속 문자열은 빌드 환경에만
+  # NETLIFY_DATABASE_URL 로 주입되고 외부 도구는 기본이 읽기 전용이라,
+  # 마이그레이션을 로컬에서 돌릴 수 없다. 빌드 안에서 도는 게 유일한 경로다.
+  # 마이그레이션은 이미 적용된 것을 건너뛰므로 매 배포마다 돌아도 안전하다.
+  command = "npm run migrate && npm run build"
   publish = ".next"
 
 [build.environment]
   NODE_VERSION = "20"
-  # 빌드 중에는 DB 에 붙지 않는다. 붙으려 하면 커넥션 타임아웃으로 빌드가 길어진다.
   NEXT_TELEMETRY_DISABLED = "1"
 
 [[plugins]]
