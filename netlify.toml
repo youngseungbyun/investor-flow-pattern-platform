@@ -12,7 +12,7 @@
   # NETLIFY_DATABASE_URL 로 주입되고 외부 도구는 기본이 읽기 전용이라,
   # 마이그레이션을 로컬에서 돌릴 수 없다. 빌드 안에서 도는 게 유일한 경로다.
   # 마이그레이션은 이미 적용된 것을 건너뛰므로 매 배포마다 돌아도 안전하다.
-  command = "npm run migrate && npm run build"
+  command = "npm run db:migrate && npm run build"
   publish = ".next"
 
 [build.environment]
