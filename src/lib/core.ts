@@ -25,7 +25,21 @@ export const env = {
   get openDartKey() {
     return required('OPEN_DART_API_KEY');
   },
-  databaseUrl: str('DATABASE_URL', 'postgres://postgres:postgres@127.0.0.1:55432/postgres'),
+  /**
+   * 접속 문자열 우선순위.
+   *
+   * Netlify DB(Neon) 확장은 빌드 때 DB 를 잡아 NETLIFY_DATABASE_URL 을 주입한다.
+   * 이 값은 사람이 넣는 게 아니라 플랫폼이 넣으므로 DATABASE_URL 보다 뒤에 둔다.
+   * 로컬에서 DATABASE_URL 을 지정하면 그쪽이 이긴다.
+   *
+   * 마지막 폴백은 로컬 PGlite 다. 배포 환경에서 이 값이 쓰이면 127.0.0.1 로 붙다가
+   * ECONNREFUSED 가 나므로, 그 자체가 "환경변수를 안 넣었다"는 신호가 된다.
+   */
+  databaseUrl:
+    str('DATABASE_URL') ||
+    str('NETLIFY_DATABASE_URL') ||
+    str('NETLIFY_DATABASE_URL_UNPOOLED') ||
+    'postgres://postgres:postgres@127.0.0.1:55432/postgres',
   investorFlowProviders: str('INVESTOR_FLOW_PROVIDER', 'naver')
     .split(',')
     .map((s) => s.trim())
@@ -58,8 +72,11 @@ export function pool(): Pool {
       // Supabase 는 전용 스키마(market)에 넣는다. 로컬 PGlite 는 public 을 그대로 쓴다.
       // URL 쿼리스트링 대신 연결 옵션으로 넘겨야 인코딩 문제가 없다.
       ...(schema ? { options: `-c search_path=${schema},public` } : {}),
-      // 원격(Supabase)은 TLS 필수. 로컬 소켓 서버는 TLS 가 없다.
-      ...(env.databaseUrl.includes('supabase.') ? { ssl: { rejectUnauthorized: false } } : {}),
+      // 관리형 Postgres(Supabase·Neon)는 TLS 필수. 로컬 소켓 서버는 TLS 가 없다.
+      // 127.0.0.1 이나 localhost 가 아니면 원격으로 보고 TLS 를 켠다.
+      ...(/^postgres(ql)?:\/\/[^@]*@(127\.0\.0\.1|localhost)/.test(env.databaseUrl)
+        ? {}
+        : { ssl: { rejectUnauthorized: false } }),
     });
   }
   return globalThis.__sdPool;
