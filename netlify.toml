@@ -12,7 +12,9 @@
   # NETLIFY_DATABASE_URL 로 주입되고 외부 도구는 기본이 읽기 전용이라,
   # 마이그레이션을 로컬에서 돌릴 수 없다. 빌드 안에서 도는 게 유일한 경로다.
   # 마이그레이션은 이미 적용된 것을 건너뛰므로 매 배포마다 돌아도 안전하다.
-  command = "npm run db:migrate && npm run build"
+  # 마이그레이션 실패로 배포 전체가 막히지 않게 한다. 접속 문자열이 아직 없으면
+  # 스키마 없이라도 사이트는 뜨고, 화면은 에러 패널로 상황을 알려준다.
+  command = "node -e \"console.log('[db] NETLIFY_DATABASE_URL:', process.env.NETLIFY_DATABASE_URL ? 'present' : 'MISSING')\" && (npm run db:migrate || echo '[db] migration skipped') && npm run build"
   publish = ".next"
 
 [build.environment]
