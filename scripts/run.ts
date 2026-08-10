@@ -7,7 +7,7 @@
  *
  * 모든 단계는 멱등이다. 같은 날짜로 두 번 돌려도 중복 행이 생기지 않는다.
  */
-import { addDays, candidateDays, errMessage, logStep, pool, query, todayKst } from '../src/lib/core';
+import { addDays, bulkInsert, candidateDays, errMessage, logStep, pool, query, todayKst } from '../src/lib/core';
 import { ingestDay } from '../src/providers/ohlcv';
 import {
   activeProviders,
@@ -33,6 +33,7 @@ import {
   syncInsiderReports,
 } from '../src/providers/dart';
 import {
+  fetchDailyBars,
   fetchProgramDaily,
   fetchProgramMinute,
   kisConfigured,
@@ -54,6 +55,89 @@ function arg(name: string, dflt?: string): string | undefined {
   if (hit.includes('=')) return hit.split('=').slice(1).join('=');
   const idx = process.argv.indexOf(hit);
   return process.argv[idx + 1] ?? dflt;
+}
+
+/**
+ * DATA.go.kr 이 아직 안 올린 날짜를 KIS 일봉으로 메운다.
+ *
+ * 금융위 시세는 T+1 이라 장이 끝나도 당일·전일이 비어 있는 시간대가 길다.
+ * KIS 는 마감 직후 바로 주므로 그 공백만 채운다. 전 종목이 아니라
+ * 이미 우리가 보고 있는 유니버스(거래대금 상위)만 대상으로 한다.
+ */
+async function stepOhlcvKis(dateIso: string, days: number) {
+  console.log(`[batch] cmd=ohlcv-kis 기준일=${dateIso} 대상일수=${days}`);
+  const from = addDays(dateIso, -Math.max(days, 1) * 2);
+
+  // 이미 채워진 날짜는 건너뛴다.
+  const have = new Set(
+    (
+      await query<{ d: string }>(
+        `select to_char(date,'YYYY-MM-DD') d from ohlcv_daily
+          where date between $1 and $2 group by date having count(*) > 100`,
+        [from, dateIso],
+      )
+    ).map((r) => r.d),
+  );
+
+  const lastFilled =
+    (await query<{ d: string }>(`select to_char(max(date),'YYYY-MM-DD') d from ohlcv_daily`))[0]?.d ?? dateIso;
+  const { symbols } = await universe(lastFilled);
+  if (symbols.length === 0) {
+    console.log('  유니버스가 비어 있습니다. 먼저 ohlcv 를 한 번 받아 주세요.');
+    return;
+  }
+  console.log(`  대상 ${symbols.length}종목(${lastFilled} 거래대금 상위) · 이미 있는 날짜 ${[...have].join(', ') || '없음'}`);
+
+  // 장이 끝나지 않은 세션의 봉은 받으면 안 된다. KIS 는 개장 전에도 당일 행을
+  // 내주는데 거래량 0 의 빈 봉이라, 넣으면 패턴·지지선 판정이 통째로 오염된다.
+  const nowKst = new Date(Date.now() + (new Date().getTimezoneOffset() + 540) * 60_000);
+  const todayIso = nowKst.toISOString().slice(0, 10);
+  const closed = nowKst.getHours() * 60 + nowKst.getMinutes() >= 15 * 60 + 40;
+  const acceptable = (d: string) => d < todayIso || (d === todayIso && closed);
+
+  const rows: Array<[string, string, number, number, number, number, number, number]> = [];
+  const dateSet = new Set<string>();
+  let done = 0;
+
+  for (const symbol of symbols) {
+    try {
+      const bars = await fetchDailyBars(symbol, from, dateIso);
+      for (const b of bars) {
+        if (have.has(b.date)) continue;
+        if (!acceptable(b.date)) continue;
+        // 거래량 0 은 휴장·미체결이거나 아직 안 끝난 세션이다.
+        if (!(b.volume > 0)) continue;
+        dateSet.add(b.date);
+        rows.push([symbol, b.date, b.o, b.h, b.l, b.c, b.volume, b.tradedValue]);
+      }
+    } catch {
+      // 개별 종목 실패는 건너뛴다. 총계는 아래 로그로 확인한다.
+    }
+    if (++done % 100 === 0) console.log(`  ${done}/${symbols.length}종목 · 누적 ${rows.length}행`);
+  }
+
+  if (rows.length === 0) {
+    console.log('  채울 일봉이 없습니다(이미 있거나 KIS 에도 없음).');
+    return;
+  }
+
+  const n = await bulkInsert(
+    'ohlcv_daily',
+    ['symbol', 'date', 'o', 'h', 'l', 'c', 'volume', 'traded_value'],
+    rows,
+    `on conflict (symbol, date) do update set
+       o = excluded.o, h = excluded.h, l = excluded.l, c = excluded.c,
+       volume = excluded.volume, traded_value = excluded.traded_value`,
+  );
+  // 캘린더도 같이 채워야 조건 검색의 거래일 창이 맞는다.
+  for (const d of dateSet) {
+    await exec(
+      `insert into trading_days (date, is_open) values ($1, true)
+       on conflict (date) do update set is_open = true`,
+      [d],
+    );
+  }
+  console.log(`KIS 일봉 보강 완료 — ${n}행 / 날짜 ${[...dateSet].sort().join(', ')}`);
 }
 
 async function stepOhlcv(dates: string[]) {
@@ -468,6 +552,9 @@ async function main() {
   switch (cmd) {
     case 'ohlcv':
       await stepOhlcv(dates);
+      break;
+    case 'ohlcv-kis':
+      await stepOhlcvKis(date, Number(arg('days') ?? 5));
       break;
     case 'flow':
       await stepFlow(date, lookback);

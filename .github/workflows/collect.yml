@@ -68,8 +68,15 @@ jobs:
       - name: 스키마 확인
         run: npm run db:migrate
 
-      - name: 일봉
+      - name: 일봉 (금융위)
         run: npm run batch -- ohlcv --date ${{ steps.d.outputs.date }} --days 5
+
+      # 금융위는 T+1 이라 장이 끝나도 당일·전일이 비어 있는 시간대가 길다.
+      # KIS 는 마감 직후 바로 주므로 그 공백만 메운다. 끝나지 않은 세션은
+      # 스텝 안에서 걸러지므로 장중에 돌아도 안전하다.
+      - name: 일봉 공백 보강 (KIS)
+        run: npm run batch -- ohlcv-kis --date ${{ steps.d.outputs.date }} --days 5
+        continue-on-error: true
 
       - name: 투자자 수급
         run: npm run batch -- flow --date ${{ steps.d.outputs.date }} --lookback ${{ github.event.inputs.lookback || 5 }}

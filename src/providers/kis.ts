@@ -288,6 +288,60 @@ function kstIso(dateIso: string, hhmmss: string): string {
  * 분봉. KIS 는 한 번에 30건만 주고 "이 시각 이전"으로 거슬러 올라간다.
  * 커서를 옮겨가며 하루치를 모은다(09:00~15:30 → 약 14회).
  */
+export interface KisDailyBar {
+  date: string;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  volume: number;
+  tradedValue: number;
+}
+
+/**
+ * 일봉. DATA.go.kr 은 T+1 이라 당일·전일 시세를 못 주는 날이 있는데,
+ * KIS 는 장 마감 직후 바로 준다. 그 공백을 메우는 용도다.
+ *
+ * FHKST03010100 = 국내주식 기간별시세. 한 번에 최대 100봉.
+ */
+export async function fetchDailyBars(
+  symbol: string,
+  fromIso: string,
+  toIso: string,
+): Promise<KisDailyBar[]> {
+  const j = await call<{ output2?: Record<string, string>[] }>(
+    '/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice',
+    'FHKST03010100',
+    {
+      FID_COND_MRKT_DIV_CODE: 'J',
+      FID_INPUT_ISCD: symbol,
+      FID_INPUT_DATE_1: compact(fromIso),
+      FID_INPUT_DATE_2: compact(toIso),
+      FID_PERIOD_DIV_CODE: 'D',
+      FID_ORG_ADJ_PRC: '0',
+    },
+  );
+  const rows = j.output2 ?? [];
+  const out: KisDailyBar[] = [];
+  for (const r of rows) {
+    const d = r.stck_bsop_date;
+    if (!d || d.length !== 8) continue;
+    const c = Number(r.stck_clpr);
+    if (!Number.isFinite(c) || c <= 0) continue;
+    out.push({
+      date: expand(d),
+      o: Number(r.stck_oprc),
+      h: Number(r.stck_hgpr),
+      l: Number(r.stck_lwpr),
+      c,
+      volume: Number(r.acml_vol ?? 0),
+      // 누적거래대금. 없으면 종가×거래량으로 근사한다.
+      tradedValue: Number(r.acml_tr_pbmn ?? 0) || Math.round(c * Number(r.acml_vol ?? 0)),
+    });
+  }
+  return out.reverse();
+}
+
 export async function fetchMinuteBars(symbol: string, dateIso: string, maxCalls = 14): Promise<MinuteBar[]> {
   const seen = new Map<string, MinuteBar>();
   let cursor = '153000';
