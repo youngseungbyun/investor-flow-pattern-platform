@@ -15,8 +15,10 @@ loadEnvFile({ path: '.env.local', quiet: true });
 loadEnvFile({ quiet: true });
 
 const LOCAL_URL = process.env.DATABASE_URL ?? 'postgres://postgres:postgres@127.0.0.1:55432/postgres';
-const REMOTE_URL = process.env.SUPABASE_DATABASE_URL ?? '';
-const REMOTE_SCHEMA = process.env.SUPABASE_SCHEMA ?? 'market';
+// 대상 DB. Supabase 전용이 아니라 어떤 Postgres 든 받는다(Neon·Netlify DB 포함).
+const REMOTE_URL = process.env.REMOTE_DATABASE_URL ?? process.env.SUPABASE_DATABASE_URL ?? '';
+// 전용 스키마가 필요 없으면 비워 둔다. Netlify DB(Neon)는 public 을 그대로 쓴다.
+const REMOTE_SCHEMA = process.env.REMOTE_SCHEMA ?? process.env.SUPABASE_SCHEMA ?? '';
 
 /** 이관 순서 — 참조 관계상 instruments 를 먼저 넣는다. */
 const TABLES = [
@@ -83,7 +85,7 @@ function remotePool(): Pool {
     connectionString: REMOTE_URL,
     max: 4,
     ssl: { rejectUnauthorized: false },
-    options: `-c search_path=${REMOTE_SCHEMA},public`,
+    ...(REMOTE_SCHEMA ? { options: `-c search_path=${REMOTE_SCHEMA},public` } : {}),
   });
 }
 
@@ -138,6 +140,8 @@ async function sync() {
   const only = arg('tables')?.split(',').map((s) => s.trim()).filter(Boolean);
   const chunk = Number(arg('chunk') ?? 2000);
   const targets = only ?? TABLES;
+  const since = arg('since');
+  if (since) console.log(`  기준: ${since} 이후 데이터만 올립니다`);
 
   const local = new Client({ connectionString: LOCAL_URL });
   await local.connect();
@@ -168,7 +172,18 @@ async function sync() {
       .filter((c) => !(c.column_default ?? '').startsWith('nextval('))
       .map((c) => c.column_name);
 
-    const total = Number((await local.query(`select count(*)::text n from ${table}`)).rows[0].n);
+    // --since 가 있으면 날짜 컬럼이 있는 테이블만 그 이후로 자른다.
+    // 무료 DB 는 용량 한도가 있어 전 구간을 올리면 들어가지 않는다.
+    const dateCol = colsRes.rows.some((c) => c.column_name === 'date')
+      ? 'date'
+      : colsRes.rows.some((c) => c.column_name === 'ts')
+        ? 'ts'
+        : null;
+    const where = since && dateCol ? ` where ${dateCol} >= '${since}'` : '';
+
+    const total = Number(
+      (await local.query(`select count(*)::text n from ${table}${where}`)).rows[0].n,
+    );
     if (total === 0) {
       console.log(`  ${table.padEnd(24)} 0행 → 건너뜀`);
       continue;
@@ -182,7 +197,7 @@ async function sync() {
     let done = 0;
     for (let offset = 0; offset < total; offset += chunk) {
       const batch = await local.query(
-        `select ${cols.join(',')} from ${table} order by ${cols.slice(0, 2).join(',')} limit $1 offset $2`,
+        `select ${cols.join(',')} from ${table}${where} order by ${cols.slice(0, 2).join(',')} limit $1 offset $2`,
         [chunk, offset],
       );
       if (batch.rows.length === 0) break;

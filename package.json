@@ -13,7 +13,9 @@
     "batch:all": "tsx scripts/run.ts all",
     "verify": "tsx scripts/run.ts verify",
     "supabase:check": "tsx scripts/supabase.ts check",
-    "supabase:sync": "tsx scripts/supabase.ts sync"
+    "supabase:sync": "tsx scripts/supabase.ts sync",
+    "db:sync": "tsx scripts/supabase.ts sync",
+    "db:check": "tsx scripts/supabase.ts check"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",
