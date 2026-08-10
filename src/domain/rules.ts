@@ -117,7 +117,9 @@ export const DEFAULT_RULE: Omit<Rule, 'date'> = {
       side: 'buy',
       metric: 'float_pct',
       op: '>=',
-      value: 1,
+      // 1% 로 두면 대부분의 날에 결과가 0건이 되어 "데이터가 없다"로 읽힌다.
+      // 실측 상위 1% 선이 0.3% 근처라 여기에 맞춘다. 화면에서 언제든 올릴 수 있다.
+      value: 0.3,
       scope: 'pattern_window',
       windowDays: 5,
       agg: 'daily_max',

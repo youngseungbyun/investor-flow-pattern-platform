@@ -143,7 +143,8 @@ async function statusPayload() {
        (select count(*) from pattern_hits where confirmed) as patterns_confirmed,
        (select count(*) from instruments)          as instruments,
        (select count(*) from instruments where free_float_basis = 'computed') as float_computed,
-       (select to_char(max(date),'YYYY-MM-DD') from trading_days where is_open) as last_trading_day`,
+       (select to_char(max(date),'YYYY-MM-DD') from trading_days where is_open) as last_trading_day,
+       (select string_agg(distinct source, ', ') from investor_flow_daily) as flow_source`,
   );
   const providers = (await activeProviders()).map((p) => ({
     id: p.id,

@@ -103,12 +103,29 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
   const { symbol } = use(params);
   const [data, setData] = useState<Payload | null>(null);
   const [windowDays, setWindowDays] = useState(20);
+  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`/api/stock/${symbol}?days=240`)
-      .then((r) => r.json())
-      .then(setData)
-      .catch(() => setData(null));
+    let alive = true;
+    setErr(null);
+    (async () => {
+      try {
+        const res = await fetch(`/api/stock/${symbol}?days=240`);
+        const body = await res.json().catch(() => null);
+        if (!alive) return;
+        if (!res.ok || !body || typeof body.error === 'string') {
+          throw new Error(body?.error ?? `응답 ${res.status}`);
+        }
+        setData(body as Payload);
+      } catch (e: unknown) {
+        if (!alive) return;
+        setData(null);
+        setErr(e instanceof Error ? e.message : '불러오지 못했어요');
+      }
+    })();
+    return () => {
+      alive = false;
+    };
   }, [symbol]);
 
   const dates = useMemo(() => {
@@ -147,17 +164,44 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
     });
   }, [dates, types, matrix]);
 
-  if (!data) {
+  if (err) {
     return (
       <Shell>
-        <p className="p-8 text-sm text-mute">불러오는 중이에요</p>
+        <section className="panel">
+          <div className="panel-head">
+            <div>
+              <h2 className="panel-title">종목 정보를 불러오지 못했어요</h2>
+              <p className="panel-desc">잠시 후 다시 시도해 주세요.</p>
+            </div>
+            <button onClick={() => window.location.reload()} className="btn btn-ghost shrink-0">
+              다시 시도
+            </button>
+          </div>
+          <div className="panel-body">
+            <p className="sunken px-3 py-2 text-[12px] text-faint">{err}</p>
+          </div>
+        </section>
       </Shell>
     );
   }
-  if (data.error) {
+  if (!data) {
     return (
       <Shell>
-        <p className="p-8 text-sm text-up">{data.error}</p>
+        <div className="space-y-4">
+          <div className="skel h-8 w-64" />
+          <div className="panel grid grid-cols-2 divide-x divide-line md:grid-cols-4">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="px-4 py-3.5">
+                <div className="skel h-3 w-16" />
+                <div className="skel mt-2 h-7 w-28" />
+              </div>
+            ))}
+          </div>
+          <div className="panel">
+            <div className="panel-head"><div className="skel h-4 w-40" /></div>
+            <div className="skel m-4 h-[460px]" />
+          </div>
+        </div>
       </Shell>
     );
   }

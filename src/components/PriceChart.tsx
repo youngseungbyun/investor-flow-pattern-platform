@@ -674,7 +674,7 @@ export default function PriceChart({
         <div
           ref={hostRef}
           onClick={onHostClick}
-          className="chart-host h-[440px] w-full"
+          className="chart-host h-[min(68vh,620px)] w-full"
           style={{ cursor: mode === 'none' ? 'crosshair' : 'copy' }}
         />
         <svg className="pointer-events-none absolute inset-0 h-full w-full">

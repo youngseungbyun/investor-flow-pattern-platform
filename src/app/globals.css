@@ -441,6 +441,9 @@ input[type='date']::-webkit-calendar-picker-indicator {
 }
 .btn-beam {
   position: relative;
+  /* 회전 그라데이션이 알약 모서리 밖으로 새어 나가지 않게 잘라낸다. */
+  isolation: isolate;
+  overflow: hidden;
   background: var(--s2);
   color: var(--fg);
   border-color: transparent;
@@ -448,7 +451,7 @@ input[type='date']::-webkit-calendar-picker-indicator {
 .btn-beam::before {
   content: '';
   position: absolute;
-  inset: -1px;
+  inset: 0;
   border-radius: inherit;
   padding: 1px;
   background: conic-gradient(from var(--beam), transparent 0deg 300deg, var(--fg) 340deg, transparent 360deg);

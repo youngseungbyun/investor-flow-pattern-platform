@@ -293,7 +293,7 @@ function KpiRow({ status, catalog }: { status: Status | null; catalog: Catalog |
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-[2fr_1fr]">
         <div className="panel p-4">
           <div className="skel h-3 w-24" />
-          <div className="skel mt-3 h-[118px] w-full" />
+          <div className="skel mt-3 h-[260px] w-full" />
         </div>
         <div className="grid grid-rows-2 gap-3">
           <div className="panel p-4"><div className="skel h-3 w-16" /><div className="skel mt-2.5 h-7 w-28" /></div>
@@ -323,7 +323,7 @@ function KpiRow({ status, catalog }: { status: Status | null; catalog: Catalog |
               ))}
             </span>
           </div>
-          <div className="mt-2 h-[120px]">
+          <div className="mt-3 h-[260px]">
             {series === null ? (
               <div className="skel h-full w-full" />
             ) : series.length === 0 ? (
@@ -401,9 +401,8 @@ function KpiRow({ status, catalog }: { status: Status | null; catalog: Catalog |
         <span>일봉 {num(n('ohlcv'))}행</span>
         <span>종목 {num(n('instruments'))}개</span>
         <span>유통주식수 실계산 {num(n('float_computed'))}종목</span>
-        {catalog && (
-          <span>수급 원천 {catalog.kis.configured ? `KIS ${catalog.kis.paper ? '모의' : '실전'}` : '미설정'}</span>
-        )}
+        {/* 배포본에는 수집용 키가 없다. 키 유무가 아니라 실제 적재된 출처를 보여준다. */}
+        <span>수급 원천 {status.counts.flow_source || '없음'}</span>
         {failed.length > 0 && <span className="text-warn">수집 실패 {failed.map((f) => f.step).join(', ')}</span>}
       </div>
     </section>
