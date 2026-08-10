@@ -20,6 +20,8 @@
 [build.environment]
   NODE_VERSION = "20"
   NEXT_TELEMETRY_DISABLED = "1"
+  # Git 연동 빌드에서만 Netlify DB 의 접속 문자열이 주입된다.
+  NETLIFY_DB_BUILD = "git"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
