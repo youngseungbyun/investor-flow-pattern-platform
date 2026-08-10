@@ -19,6 +19,8 @@ const LOCAL_URL = process.env.DATABASE_URL ?? 'postgres://postgres:postgres@127.
 const REMOTE_URL = process.env.REMOTE_DATABASE_URL ?? process.env.SUPABASE_DATABASE_URL ?? '';
 // 전용 스키마가 필요 없으면 비워 둔다. Netlify DB(Neon)는 public 을 그대로 쓴다.
 const REMOTE_SCHEMA = process.env.REMOTE_SCHEMA ?? process.env.SUPABASE_SCHEMA ?? '';
+/** 스키마 수식어. 비어 있으면 접두사 자체를 붙이지 않는다(`.table` 이 되면 문법 오류). */
+const Q = REMOTE_SCHEMA ? `${REMOTE_SCHEMA}.` : '';
 
 /** 이관 순서 — 참조 관계상 instruments 를 먼저 넣는다. */
 const TABLES = [
@@ -116,7 +118,7 @@ async function check() {
     for (const t of TABLES) {
       let remoteN = '-';
       try {
-        const r = await remote.query(`select count(*)::text n from ${REMOTE_SCHEMA}.${t}`);
+        const r = await remote.query(`select count(*)::text n from ${Q}${t}`);
         remoteN = Number(r.rows[0].n).toLocaleString();
       } catch {
         remoteN = '없음';
@@ -210,7 +212,7 @@ async function sync() {
       });
 
       await remote.query(
-        `insert into ${REMOTE_SCHEMA}.${table} (${cols.join(',')}) values ${tuples.join(',')}
+        `insert into ${Q}${table} (${cols.join(',')}) values ${tuples.join(',')}
          on conflict (${conflict}) do ${updateSet ? `update set ${updateSet}` : 'nothing'}`,
         values,
       );
