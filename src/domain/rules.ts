@@ -120,7 +120,10 @@ export const DEFAULT_RULE: Omit<Rule, 'date'> = {
       // 1% 로 두면 대부분의 날에 결과가 0건이 되어 "데이터가 없다"로 읽힌다.
       // 실측 상위 1% 선이 0.3% 근처라 여기에 맞춘다. 화면에서 언제든 올릴 수 있다.
       value: 0.3,
-      scope: 'pattern_window',
+      // 기본은 '최근'. 'pattern_window' 는 패턴 형성 구간(보통 20~150봉) 안에서
+      // 수급을 찾는데, 수급 데이터가 그만큼 쌓이기 전에는 교집합이 거의 비어
+      // 결과가 0건이 된다. 데이터가 충분히 쌓이면 화면에서 바꿔 쓰면 된다.
+      scope: 'recent',
       windowDays: 5,
       agg: 'daily_max',
     },

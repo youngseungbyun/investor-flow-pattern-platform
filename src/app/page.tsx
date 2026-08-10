@@ -492,7 +492,7 @@ function Empty({ children }: { children: React.ReactNode }) {
   return (
     <tr>
       <td colSpan={12} className="l !text-center">
-        <div className="px-4 py-16 text-[13px] text-faint">{children}</div>
+        <div className="px-4 py-10 text-[13px] text-faint">{children}</div>
       </td>
     </tr>
   );
