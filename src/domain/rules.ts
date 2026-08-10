@@ -90,6 +90,14 @@ export interface PatternCondition {
   minScore?: number;
   /** 현재가와 돌파선 이격 절대값 상한(%) */
   maxDistancePct?: number;
+  /**
+   * 돌파 후 지난 거래일 수 상한. 기준일을 바꾸면 "방금 돌파한 것"과
+   * "돌파한 지 3주 지난 것"이 같이 나오는데 둘은 판단이 전혀 다르다.
+   * null 이면 제한 없음. 돌파 전 종목은 이 조건이 걸리면 제외된다.
+   */
+  maxBarsSinceBreakout?: number;
+  /** 구조가 완성된 뒤 지난 거래일 수 상한. 돌파 여부와 무관하게 적용된다. */
+  maxBarsSinceFormed?: number;
 }
 
 export interface LineCondition {
@@ -102,6 +110,12 @@ export interface Rule {
   market: 'ALL' | 'KOSPI' | 'KOSDAQ';
   minTradedValue: number;
   flow: FlowCondition[];
+  /**
+   * 수급 조건을 묶는 방식.
+   * AND = 모든 조건을 동시에 만족(기본), OR = 하나라도 만족.
+   * "사모가 크게 샀거나 연기금이 크게 샀거나" 같은 질문은 OR 로만 표현된다.
+   */
+  flowLogic?: 'AND' | 'OR';
   pattern?: PatternCondition;
   line?: LineCondition;
   limit: number;
@@ -111,6 +125,7 @@ export interface Rule {
 export const DEFAULT_RULE: Omit<Rule, 'date'> = {
   market: 'ALL',
   minTradedValue: 1_000_000_000,
+  flowLogic: 'AND',
   flow: [
     {
       investorType: 'private_fund',
@@ -132,6 +147,8 @@ export const DEFAULT_RULE: Omit<Rule, 'date'> = {
     patterns: ['inverse_head_shoulders', 'cup_with_handle'],
     stages: ['near_pivot', 'pullback'],
     minScore: 50,
+    // 돌파한 지 오래된 건 지금 판단에 쓸모가 적다. 기본은 10거래일.
+    maxBarsSinceBreakout: 10,
   },
   limit: 100,
   sortBy: 'flow',
@@ -172,6 +189,8 @@ export interface RuleRow {
     breakoutDate: string | null;
     startDate: string | null;
     endDate: string | null;
+    barsSinceBreakout: number | null;
+    barsSinceFormed: number | null;
   }>;
   lines: Array<{ signal: string; score: number; detail: Record<string, unknown> }>;
   insiderBuys: number;
@@ -216,8 +235,10 @@ export async function runRule(rule: Rule): Promise<RuleResult> {
     symbol: string; pattern: string; direction: Direction; stage: Stage; score: string;
     pivot_price: string | null; distance_pct: string | null;
     breakout_date: string | null; start_date: string | null; end_date: string | null;
+    bars_since_breakout: number | null; bars_since_formed: number | null;
   }>(
     `select symbol, pattern, direction, stage, score, pivot_price, distance_pct,
+            bars_since_breakout, bars_since_formed,
             to_char(breakout_date,'YYYY-MM-DD') breakout_date,
             to_char(start_date,'YYYY-MM-DD') start_date,
             to_char(end_date,'YYYY-MM-DD') end_date
@@ -227,7 +248,9 @@ export async function runRule(rule: Rule): Promise<RuleResult> {
         and ($3::text[] is null or direction = any($3))
         and ($4::text[] is null or stage = any($4))
         and score >= $5
-        and ($6::numeric is null or abs(coalesce(distance_pct, 0)) <= $6)`,
+        and ($6::numeric is null or abs(coalesce(distance_pct, 0)) <= $6)
+        and ($7::int is null or (bars_since_breakout is not null and bars_since_breakout <= $7))
+        and ($8::int is null or coalesce(bars_since_formed, 0) <= $8)`,
     [
       rule.date,
       pc?.patterns?.length ? pc.patterns : null,
@@ -235,6 +258,8 @@ export async function runRule(rule: Rule): Promise<RuleResult> {
       pc?.stages?.length ? pc.stages : null,
       pc?.minScore ?? 0,
       pc?.maxDistancePct ?? null,
+      pc?.maxBarsSinceBreakout ?? null,
+      pc?.maxBarsSinceFormed ?? null,
     ],
   );
 
@@ -253,7 +278,13 @@ export async function runRule(rule: Rule): Promise<RuleResult> {
 
   /* 2) 수급 조건 AND 결합 */
   const flowMatches = new Map<string, RuleMatchFlow[]>();
+  const isOr = rule.flowLogic === 'OR' && rule.flow.length > 1;
+  const orUnion = new Set<string>();
+  const patternPool = candidates ? [...candidates] : null;
+
   for (const cond of rule.flow) {
+    // OR 에서는 조건들이 서로 좁히면 안 된다. 매번 같은 출발 집합에서 찾는다.
+    if (isOr) candidates = patternPool;
     const col = METRIC_COL[cond.metric];
     const expr = cond.side === 'buy' ? `e.${col}` : `-e.${col}`;
     const windowFrom = dates[Math.min(dates.length, cond.windowDays) - 1];
@@ -297,7 +328,13 @@ export async function runRule(rule: Rule): Promise<RuleResult> {
     }>(sql, [rule.date, cond.investorType, windowFrom, cond.value, candidates]);
 
     const hitSymbols = new Set(rows.map((r) => r.symbol));
-    candidates = candidates ? candidates.filter((s) => hitSymbols.has(s)) : [...hitSymbols];
+    if (isOr) {
+      // OR 은 조건마다 독립적으로 뽑아 합집합을 만든다. 패턴 후보가 있으면
+      // 그 안에서만 찾는다(패턴은 항상 AND 로 걸린다).
+      for (const sm of hitSymbols) orUnion.add(sm);
+    } else {
+      candidates = candidates ? candidates.filter((s) => hitSymbols.has(s)) : [...hitSymbols];
+    }
 
     for (const r of rows) {
       if (!hitSymbols.has(r.symbol)) continue;
@@ -315,7 +352,7 @@ export async function runRule(rule: Rule): Promise<RuleResult> {
       flowMatches.set(r.symbol, list);
     }
 
-    if (candidates.length === 0) {
+    if (!isOr && candidates && candidates.length === 0) {
       // 임계값이 너무 센 것인지 데이터가 없는 것인지 구분해 준다.
       // 실제 최대 관측치를 같이 알려주면 사용자가 바로 보정할 수 있다.
       const observed = await query<{ mx: string | null; p99: string | null; n: string }>(
@@ -340,6 +377,13 @@ export async function runRule(rule: Rule): Promise<RuleResult> {
     }
   }
 
+  if (isOr) {
+    candidates = [...orUnion];
+    if (candidates.length === 0) {
+      notes.push('걸어 둔 수급 조건 중 어느 하나도 만족하는 종목이 없어요. 임계값을 낮춰 보세요.');
+      return { rule, windowDates: dates, rows: [], notes, sources: [] };
+    }
+  }
   if (!candidates) candidates = [];
 
   /* 3) 라인 조건 */
@@ -420,6 +464,8 @@ export async function runRule(rule: Rule): Promise<RuleResult> {
       pivotPrice: p.pivot_price === null ? null : Number(p.pivot_price),
       distancePct: p.distance_pct === null ? null : Number(p.distance_pct),
       breakoutDate: p.breakout_date,
+      barsSinceBreakout: p.bars_since_breakout,
+      barsSinceFormed: p.bars_since_formed,
       startDate: p.start_date,
       endDate: p.end_date,
     })),

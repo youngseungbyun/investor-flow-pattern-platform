@@ -49,6 +49,10 @@ export interface PatternHit {
   breakoutDate: string | null;
   startDate: string | null;
   endDate: string | null;
+  /** 돌파 후 지난 거래일 수. 돌파 전이면 null. */
+  barsSinceBreakout: number | null;
+  /** 구조가 완성된 뒤 지난 거래일 수. */
+  barsSinceFormed: number;
   evidence: Evidence;
 }
 
@@ -295,9 +299,17 @@ function finish(
   const raw = Math.max(0, baseScore + volBonus + dryBonus + stagePenalty);
   const score = Math.max(0, Math.min(100, round(raw * (0.45 + 0.55 * freshness), 2)));
 
+  const lastIdx = bars.length - 1;
+  // 돌파 후 경과 봉수. 돌파 전이면 null.
+  const barsSinceBreakout = st.breakoutIdx >= 0 ? lastIdx - st.breakoutIdx : null;
+  // 구조가 완성된(오른쪽 끝 봉) 뒤 경과 봉수. 돌파 여부와 무관하게 항상 있다.
+  const barsSinceFormed = Math.max(0, lastIdx - endIdx);
+
   return {
     pattern: patternId,
     stage: st.stage,
+    barsSinceBreakout,
+    barsSinceFormed,
     score,
     confirmed: st.stage === 'breakout' || st.stage === 'pullback',
     pivotPrice: st.pivotNow,
@@ -313,6 +325,8 @@ function finish(
       distancePct: st.distancePct,
       breakoutVolumeRatio: st.volumeRatio,
       breakoutDate: st.breakoutIdx >= 0 ? bars[st.breakoutIdx].date : null,
+      barsSinceBreakout,
+      barsSinceFormed,
       formationVolumeRatio: round(dry, 3),
       staleBars,
       freshness: round(freshness, 3),
@@ -323,11 +337,11 @@ function finish(
 /* ── 역헤드앤숄더 / 헤드앤숄더 ── */
 
 function headShoulders(bars: Bar[], k: number, inverse: boolean): Draft | null {
-  const raw = inverse ? swingLows(bars, k) : swingHighs(bars, k);
-  // 잔물결 피벗 제거: ATR 1.2배 이상 반전이 있었던 피벗만 어깨·머리 후보가 된다.
-  const pivots = significant(bars, raw, atr(bars) * 1.2, inverse);
+  const pivots = inverse ? swingLows(bars, k) : swingHighs(bars, k);
   if (pivots.length < 3) return null;
   const px = (i: number) => (inverse ? bars[i].l : bars[i].h);
+  /** 넥라인 앵커로 쓸 반대편 극점 */
+  const anti = (i: number) => (inverse ? bars[i].h : bars[i].l);
   const pool = pivots.slice(-14);
   let best: Draft | null = null;
 
@@ -336,32 +350,68 @@ function headShoulders(bars: Bar[], k: number, inverse: boolean): Draft | null {
       for (let c = b + 1; c < pool.length; c++) {
         const [iL, iH, iR] = [pool[a], pool[b], pool[c]];
         const [L, H, R] = [px(iL), px(iH), px(iR)];
+
+        // 머리가 양 어깨보다 확실히 더 나가야 한다.
         const headOk = inverse ? H < L && H < R : H > L && H > R;
         if (!headOk) continue;
+
         const segL = iH - iL, segR = iR - iH, span = iR - iL;
         if (segL < 5 || segR < 5 || span < 20 || span > 120) continue;
-        const sym = Math.abs(L - R) / Math.min(L, R);
-        if (sym > 0.05) continue;
 
-        let iP1 = iL, iP2 = iH;
-        for (let j = iL; j <= iH; j++) if (inverse ? bars[j].h > bars[iP1].h : bars[j].l < bars[iP1].l) iP1 = j;
-        for (let j = iH; j <= iR; j++) if (inverse ? bars[j].h > bars[iP2].h : bars[j].l < bars[iP2].l) iP2 = j;
-        if (iP2 <= iP1) continue;
-        const P1 = inverse ? bars[iP1].h : bars[iP1].l;
-        const P2 = inverse ? bars[iP2].h : bars[iP2].l;
+        // 가격 대칭. 두 어깨 높이가 비슷해야 한다.
+        const sym = Math.abs(L - R) / Math.min(L, R);
+        if (sym > 0.04) continue;
+
+        // 시간 대칭. 한쪽 어깨가 다른 쪽의 3배를 넘으면 헤드앤숄더로 보기 어렵다.
+        // 가격만 보면 좌우가 완전히 찌그러진 구조도 통과해 오탐이 늘어난다.
+        const timeSym = Math.abs(segL - segR) / Math.max(segL, segR);
+        if (timeSym > 0.6) continue;
+
+        // 머리 깊이. 얕으면 그냥 잔파동이다.
+        const depth = Math.abs(Math.min(L, R) - H) / Math.min(L, R);
+        if (depth < 0.04) continue;
+
+        // 넥라인은 어깨와 머리 "사이"의 반작용 극점 두 개를 잇는다.
+        // 경계를 포함해 훑으면 앵커가 어깨나 머리 위로 올라가 선이 어긋난다.
+        let iP1 = -1, iP2 = -1;
+        for (let j = iL + 1; j < iH; j++) {
+          if (iP1 < 0 || (inverse ? anti(j) > anti(iP1) : anti(j) < anti(iP1))) iP1 = j;
+        }
+        for (let j = iH + 1; j < iR; j++) {
+          if (iP2 < 0 || (inverse ? anti(j) > anti(iP2) : anti(j) < anti(iP2))) iP2 = j;
+        }
+        if (iP1 < 0 || iP2 < 0 || iP2 <= iP1) continue;
+
+        const P1 = anti(iP1);
+        const P2 = anti(iP2);
+
+        // 넥라인이 머리 반대편에 있어야 구조가 성립한다.
+        if (inverse ? Math.min(P1, P2) <= H : Math.max(P1, P2) >= H) continue;
+
+        // 넥라인 기울기가 과하면 삼각형·쐐기지 헤드앤숄더가 아니다.
+        const priceScale = (P1 + P2) / 2 || 1;
         const slope = (P2 - P1) / (iP2 - iP1);
+        const slopePctPerBar = Math.abs(slope / priceScale) * 100;
+        if (slopePctPerBar > 0.35) continue;
+
         const neckAt = (i: number) => P1 + slope * (i - iP1);
 
-        const depth = Math.abs(Math.min(L, R) - H) / Math.min(L, R);
-        // 교과서 조건: 머리 구간 거래량이 왼어깨보다 줄고, 오른어깨에서 더 준다.
-        // 순서가 맞으면 가점, 오른어깨가 가장 붐비면 감점(세력 이탈 신호가 아님).
-        const vL = segVolume(bars, iL - Math.floor(segL / 2), iL + Math.floor(segL / 2));
-        const vH = segVolume(bars, iH - Math.floor(segL / 2), iH + Math.floor(segR / 2));
-        const vR = segVolume(bars, iR - Math.floor(segR / 2), iR);
-        const volSeq = vL > 0 && vH > 0 ? (vR < vH && vH < vL ? 1 : vR > vL ? -1 : 0) : 0;
+        // 거래량. 전형적인 형태는 머리에서 크게 실리고 오른쪽 어깨에서 줄어든다.
+        // 하드 필터로 쓰면 놓치는 게 많아 점수 가산으로만 쓴다.
+        const volAt = (i: number, w: number) =>
+          avg(bars.slice(Math.max(0, i - w), Math.min(bars.length, i + w + 1)).map((x) => x.volume));
+        const volL = volAt(iL, 2);
+        const volH = volAt(iH, 2);
+        const volR = volAt(iR, 2);
+        const volShape = volL > 0 && volR < volL ? 1 : 0;
+        const volHead = volL > 0 && volH > volL ? 1 : 0;
+
         const base =
-          clamp01(1 - sym / 0.05) * 36 + clamp01(depth / 0.08) * 22 +
-          clamp01(Math.min(segL, segR) / 10) * 16 + volSeq * 8;
+          clamp01(1 - sym / 0.04) * 30 +
+          clamp01(1 - timeSym / 0.6) * 18 +
+          clamp01(depth / 0.10) * 22 +
+          clamp01(Math.min(segL, segR) / 12) * 10 +
+          (volShape + volHead) * 5;
 
         const hit = finish(
           inverse ? 'inverse_head_shoulders' : 'head_and_shoulders',
@@ -371,10 +421,13 @@ function headShoulders(bars: Bar[], k: number, inverse: boolean): Draft | null {
             head: { date: bars[iH].date, price: H },
             rightShoulder: { date: bars[iR].date, price: R },
             shoulderSymmetry: round(sym),
+            timeSymmetry: round(timeSym),
             headDepthPct: round(depth * 100, 2),
             segmentBars: { left: segL, right: segR },
             spanBars: span,
-            volumeSequence: { leftShoulder: Math.round(vL), head: Math.round(vH), rightShoulder: Math.round(vR) },
+            necklineSlopePctPerBar: round(slopePctPerBar, 3),
+            volumeShrinksIntoRightShoulder: volShape === 1,
+            volumePeaksAtHead: volHead === 1,
             neckline: { p1: { date: bars[iP1].date, price: P1 }, p2: { date: bars[iP2].date, price: P2 } },
           },
         );
@@ -727,10 +780,12 @@ export async function saveHits(hits: PatternHit[], date: string): Promise<number
   return bulkInsert(
     'pattern_hits',
     ['symbol', 'date', 'pattern', 'score', 'evidence_json', 'confirmed',
-      'direction', 'kind', 'stage', 'pivot_price', 'breakout_date', 'start_date', 'end_date', 'distance_pct'],
+      'direction', 'kind', 'stage', 'pivot_price', 'breakout_date', 'start_date', 'end_date', 'distance_pct',
+      'bars_since_breakout', 'bars_since_formed'],
     hits.map((h) => [
       h.symbol, date, h.pattern, h.score, JSON.stringify(h.evidence), h.confirmed,
       h.direction, h.kind, h.stage, h.pivotPrice, h.breakoutDate, h.startDate, h.endDate, h.distancePct,
+      h.barsSinceBreakout, h.barsSinceFormed,
     ]),
     `on conflict (symbol, date, pattern) do update set
        score = excluded.score,
@@ -743,6 +798,8 @@ export async function saveHits(hits: PatternHit[], date: string): Promise<number
        breakout_date = excluded.breakout_date,
        start_date = excluded.start_date,
        end_date = excluded.end_date,
-       distance_pct = excluded.distance_pct`,
+       distance_pct = excluded.distance_pct,
+       bars_since_breakout = excluded.bars_since_breakout,
+       bars_since_formed = excluded.bars_since_formed`,
   );
 }

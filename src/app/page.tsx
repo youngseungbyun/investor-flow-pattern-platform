@@ -36,7 +36,8 @@ interface RuleBody {
   market: string;
   minTradedValue: number;
   flow: FlowCondition[];
-  pattern?: { patterns?: string[]; directions?: Direction[]; stages?: Stage[]; minScore?: number };
+  flowLogic?: 'AND' | 'OR';
+  pattern?: { patterns?: string[]; directions?: Direction[]; stages?: Stage[]; minScore?: number; maxBarsSinceBreakout?: number };
   line?: { signals?: string[]; minScore?: number };
   limit: number;
   sortBy: 'flow' | 'score' | 'traded_value';
@@ -47,7 +48,7 @@ interface RuleRow {
   close: number | null; changePct: number | null; tradedValue: number | null;
   floatShares: number | null; floatBasis: 'computed' | 'listed_shares';
   flows: Array<{ label: string; metric: string; value: number; onDate: string | null }>;
-  patterns: Array<{ pattern: string; ko: string; direction: Direction; stage: Stage; stageKo: string; score: number; pivotPrice: number | null; distancePct: number | null }>;
+  patterns: Array<{ pattern: string; ko: string; direction: Direction; stage: Stage; stageKo: string; score: number; pivotPrice: number | null; distancePct: number | null; barsSinceBreakout?: number | null; barsSinceFormed?: number | null }>;
   lines: Array<{ signal: string; score: number; detail: Record<string, unknown> }>;
   insiderBuys: number;
   rank: number;
@@ -109,15 +110,7 @@ const Icon = {
 
 /* ══════════════════════════ 페이지 ══════════════════════════ */
 
-type Tab = 'flow' | 'pattern' | 'line';
-const TABS: Array<{ id: Tab; ko: string; desc: string }> = [
-  { id: 'flow', ko: '수급분석', desc: '주체별 수급을 패턴·위치와 조합해 조건 검색' },
-  { id: 'pattern', ko: '패턴분석', desc: '상승·하락 패턴 16종과 현재 단계' },
-  { id: 'line', ko: '라인분석', desc: '거래량 돌파 눌림목 · 이평선 지지' },
-];
-
 export default function Dashboard() {
-  const [tab, setTab] = useState<Tab>('flow');
   const [status, setStatus] = useState<Status | null>(null);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [date, setDate] = useState('');
@@ -127,17 +120,8 @@ export default function Dashboard() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    const t = new URLSearchParams(window.location.search).get('tab');
-    if (t === 'pattern' || t === 'line' || t === 'flow') setTab(t);
     setTheme((document.documentElement.dataset.theme as 'dark' | 'light') ?? 'dark');
   }, []);
-
-  const goTab = (t: Tab) => {
-    setTab(t);
-    const u = new URL(window.location.href);
-    u.searchParams.set('tab', t);
-    window.history.replaceState(null, '', u.toString());
-  };
 
   const toggleTheme = () => {
     const next = theme === 'dark' ? 'light' : 'dark';
@@ -182,24 +166,9 @@ export default function Dashboard() {
         <div className="mx-auto flex max-w-[1720px] flex-wrap items-center gap-x-5 gap-y-1 px-5 pt-2.5">
           <h1 className="text-[15px] font-semibold tracking-[-0.012em]">수급·패턴 분석</h1>
 
-          <nav className="-mb-px flex" role="tablist">
-            {TABS.map((t) => (
-              <button
-                key={t.id}
-                role="tab"
-                aria-selected={tab === t.id}
-                onClick={() => goTab(t.id)}
-                title={t.desc}
-                className={`cursor-pointer border-b-2 px-3.5 pb-2 pt-1 text-[13px] font-semibold transition-colors ${
-                  tab === t.id
-                    ? 'border-accent text-fg'
-                    : 'border-transparent text-faint hover:text-mute'
-                }`}
-              >
-                {t.ko}
-              </button>
-            ))}
-          </nav>
+          <span className="hidden pb-2 text-[12.5px] text-faint sm:inline">
+            수급, 패턴, 라인을 한 화면에서 조합해 찾습니다
+          </span>
 
           <div className="ml-auto flex items-center gap-2 pb-1.5">
             <label className="flex items-center gap-1.5 text-[12px] text-mute">
@@ -250,12 +219,8 @@ export default function Dashboard() {
         {loadError ? <LoadError message={loadError} /> : <KpiRow status={status} catalog={catalog} />}
         {loadError ? null : !date || !catalog ? (
           <Skeleton />
-        ) : tab === 'flow' ? (
-          <FlowTab date={date} fromDate={fromDate} catalog={catalog} status={status} />
-        ) : tab === 'pattern' ? (
-          <PatternTab date={date} fromDate={fromDate} catalog={catalog} />
         ) : (
-          <LineTab date={date} fromDate={fromDate} catalog={catalog} />
+          <FlowTab date={date} fromDate={fromDate || undefined} catalog={catalog} status={status} />
         )}
       </div>
 
@@ -686,9 +651,25 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
                 )}
               </div>
             ))}
-            <button onClick={addFlow} className="btn btn-ghost !px-2.5 !py-1.5 !text-[12.5px] !font-medium">
-              {Icon.plus} 조건 추가
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button onClick={addFlow} className="btn btn-ghost !px-2.5 !py-1.5 !text-[12.5px] !font-medium">
+                {Icon.plus} 조건 추가
+              </button>
+              {rule.flow.length > 1 && (
+                <span className="flex items-center gap-1">
+                  <span className="mr-0.5 text-[12px] text-faint">조건 묶기</span>
+                  {(['AND', 'OR'] as const).map((lg) => (
+                    <Chip
+                      key={lg}
+                      on={(rule.flowLogic ?? 'AND') === lg}
+                      onClick={() => setRule((r) => ({ ...r, flowLogic: lg }))}
+                    >
+                      {lg === 'AND' ? '모두 만족' : '하나라도'}
+                    </Chip>
+                  ))}
+                </span>
+              )}
+            </div>
           </div>
 
           {/* 패턴 조건 */}
@@ -727,6 +708,28 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
                   onChange={(e) => setRule((r) => ({ ...r, pattern: { ...r.pattern, minScore: Number(e.target.value) } }))}
                   className="w-28 cursor-pointer accent-[var(--accent)]"
                 />
+              </label>
+              <label className="ml-3 flex items-center gap-1.5 text-[12px] text-faint">
+                돌파 후
+                <select
+                  className="input !py-1 !text-[12px]"
+                  value={rule.pattern?.maxBarsSinceBreakout ?? ''}
+                  onChange={(e) =>
+                    setRule((r) => ({
+                      ...r,
+                      pattern: {
+                        ...r.pattern,
+                        maxBarsSinceBreakout: e.target.value === '' ? undefined : Number(e.target.value),
+                      },
+                    }))
+                  }
+                >
+                  <option value="">제한 없음</option>
+                  <option value={3}>3거래일 이내</option>
+                  <option value={5}>5거래일 이내</option>
+                  <option value={10}>10거래일 이내</option>
+                  <option value={20}>20거래일 이내</option>
+                </select>
               </label>
             </div>
           </div>
@@ -853,280 +856,4 @@ interface PatternRow {
   evidence: Record<string, unknown>;
   flow_tags: Array<{ investor_type: string; float_pct: string; on_date: string }>;
   line_tags: Array<{ signal: string; score: number }>;
-}
-
-function PatternTab({ date, fromDate, catalog }: { date: string; fromDate?: string; catalog: Catalog }) {
-  const [directions, setDirections] = useState<Direction[]>(['bullish']);
-  const [patterns, setPatterns] = useState<string[]>([]);
-  const [stages, setStages] = useState<Stage[]>(['near_pivot', 'breakout', 'pullback']);
-  const [minScore, setMinScore] = useState(60);
-  const [rows, setRows] = useState<PatternRow[]>([]);
-  const [labels, setLabels] = useState<Record<string, string>>({});
-  const [open, setOpen] = useState<string | null>(null);
-
-  useEffect(() => {
-    const q = new URLSearchParams({ date, minScore: String(minScore), limit: '200' });
-    if (fromDate) q.set('from', fromDate);
-    if (directions.length) q.set('directions', directions.join(','));
-    if (patterns.length) q.set('patterns', patterns.join(','));
-    if (stages.length) q.set('stages', stages.join(','));
-    fetch(`/api/patterns?${q}`).then((r) => r.json()).then((d) => {
-      setRows(d.rows ?? []);
-      setLabels({ ...(d.stageLabels ?? {}), ...(d.investorLabels ?? {}) });
-    });
-  }, [date, fromDate, directions, patterns, stages, minScore]);
-
-  const toggle = <T,>(arr: T[], v: T, set: (x: T[]) => void) =>
-    set(arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
-
-  const visible = catalog.patterns.filter((p) => !directions.length || directions.includes(p.direction));
-
-  return (
-    <div className="space-y-4">
-      <Card title="패턴" sub="지금 어느 단계에 있는지로 걸러요" right={<span className="tag tag-mute num">{num(rows.length)}건</span>}>
-        <div className="panel-body space-y-3">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="mr-1 text-[12px] text-faint">방향</span>
-            {(['bullish', 'bearish', 'neutral'] as Direction[]).map((d) => (
-              <Chip key={d} on={directions.includes(d)} tone={DIR_TONE[d]} onClick={() => toggle(directions, d, setDirections)}>
-                {DIR_KO[d]}패턴
-              </Chip>
-            ))}
-            <span className="ml-3 mr-1 text-[12px] text-faint">현재 단계</span>
-            {catalog.stages.map((s) => (
-              <Chip key={s.id} on={stages.includes(s.id as Stage)} onClick={() => toggle(stages, s.id as Stage, setStages)}>
-                {s.ko}
-              </Chip>
-            ))}
-            <label className="ml-3 flex items-center gap-2 text-[12px] text-faint">
-              최소 점수 <span className="num w-6 text-fg">{minScore}</span>
-              <input type="range" min={0} max={100} value={minScore} onChange={(e) => setMinScore(Number(e.target.value))} className="w-32 cursor-pointer accent-[var(--accent)]" />
-            </label>
-          </div>
-          <details className="group" open={patterns.length > 0}>
-            <summary className="chip inline-flex cursor-pointer list-none select-none [&::-webkit-details-marker]:hidden">
-              패턴 종류 {patterns.length ? `${patterns.length}개 선택` : '전체'}
-              <span className="text-faint transition-transform group-open:rotate-180" aria-hidden>⌄</span>
-            </summary>
-            <div className="mt-2 flex flex-wrap gap-1">
-              {visible.map((p) => (
-                <Chip key={p.id} on={patterns.includes(p.id)} tone={DIR_TONE[p.direction]} onClick={() => toggle(patterns, p.id, setPatterns)}>
-                  {p.ko}
-                </Chip>
-              ))}
-            </div>
-          </details>
-          <p className="text-[11px] leading-relaxed text-faint">
-            자동 판정이라 오탐이 섞여요. 근거 버튼에서 어깨 대칭도, 돌파 거래량 배수 같은 실제 수치를 확인해 주세요.
-          </p>
-        </div>
-      </Card>
-
-      <Card>
-        <div className="scroll-x">
-          <table className="tbl min-w-[1280px]">
-            <thead>
-              <tr>
-                <th className="l">종목</th>
-                <th className="l">패턴</th>
-                <th className="l">단계</th>
-                <th>점수</th>
-                <th>돌파선</th>
-                <th>이격</th>
-                <th>종가</th>
-                <th className="l">동반 수급</th>
-                <th className="l">라인</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 && <Empty>이 조건에 잡힌 패턴이 없어요.</Empty>}
-              {rows.map((r, i) => {
-                const key = `${r.symbol}-${r.pattern}`;
-                const dist = r.distance_pct === null ? null : Number(r.distance_pct);
-                return (
-                  <Fragment key={key}>
-                    <tr className="rise" style={{ animationDelay: `${Math.min(i, 14) * 18}ms` }}>
-                      <td className="l"><SymbolCell row={r} /></td>
-                      <td className="l">
-                        <span className={`font-medium ${DIR_TEXT[r.direction]}`}>
-                          {catalog.patterns.find((p) => p.id === r.pattern)?.ko ?? r.pattern}
-                        </span>
-                      </td>
-                      <td className="l">
-                        <span className={STAGE_TAG[r.stage] ?? 'tag tag-mute'}>{labels[r.stage] ?? r.stage}</span>
-                      </td>
-                      <td className="num font-semibold">{Number(r.score).toFixed(0)}</td>
-                      <td className="num">{num(r.pivot_price === null ? null : Number(r.pivot_price))}</td>
-                      <td className={`num ${(dist ?? 0) >= 0 ? 'up' : 'down'}`}>{dist === null ? '-' : signed(dist)}</td>
-                      <td className="num">{num(r.close === null ? null : Number(r.close))}</td>
-                      <td className="l">
-                        {!r.flow_tags?.length ? <span className="text-faint">-</span> : (
-                          <div className="flex flex-wrap items-center gap-1">
-                            {r.flow_tags.slice(0, 3).map((f) => (
-                              <span key={f.investor_type} className="tag tag-mute">
-                                {labels[f.investor_type] ?? f.investor_type}
-                                <span className="num text-fg">{Number(f.float_pct).toFixed(2)}%</span>
-                              </span>
-                            ))}
-                            {r.flow_tags.length > 3 && (
-                              <span className="num text-[12px] text-faint">+{r.flow_tags.length - 3}</span>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                      <td className="l">
-                        {!r.line_tags?.length ? <span className="text-faint">-</span> : (
-                          <div className="flex flex-wrap gap-1">
-                            {r.line_tags.map((l) => (
-                              <span key={l.signal} className="tag tag-violet">
-                                {l.signal === 'volume_breakout_pullback' ? '돌파 눌림목' : '이평 지지'}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </td>
-                      <td className="w-px whitespace-nowrap">
-                        <button onClick={() => setOpen(open === key ? null : key)} className="chip !px-2.5 !py-1 !text-[12px]">
-                          근거
-                        </button>
-                      </td>
-                    </tr>
-                    {open === key && (
-                      <tr>
-                        <td colSpan={10} className="l !p-0">
-                          <pre className="max-h-80 overflow-auto bg-[rgb(0_0_0/0.22)] p-3 font-mono text-[11px] leading-relaxed text-mute">
-                            {JSON.stringify(r.evidence, null, 2)}
-                          </pre>
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-/* ══════════════════════ 3. 라인분석 ══════════════════════ */
-
-interface LineRow {
-  symbol: string; name: string; market: string; signal: string; score: string;
-  detail: Record<string, unknown>;
-  close: string | null; traded_value: string | null; change_pct: string | null;
-  patterns: Array<{ pattern: string; direction: Direction; stage: Stage; score: number }>;
-}
-
-function LineTab({ date, fromDate, catalog }: { date: string; fromDate?: string; catalog: Catalog }) {
-  const [signal, setSignal] = useState('volume_breakout_pullback');
-  const [minScore, setMinScore] = useState(40);
-  const [rows, setRows] = useState<LineRow[]>([]);
-  const [open, setOpen] = useState<string | null>(null);
-
-  useEffect(() => {
-    const q = new URLSearchParams({ date, signal, minScore: String(minScore), limit: '200' });
-    if (fromDate) q.set('from', fromDate);
-    fetch(`/api/lines?${q}`).then((r) => r.json()).then((d) => setRows(d.rows ?? []));
-  }, [date, fromDate, signal, minScore]);
-
-  return (
-    <div className="space-y-4">
-      <Card title="라인" sub="거래량 돌파 후 눌림목과 이평선 지지를 함께 봐요" right={<span className="tag tag-mute num">{num(rows.length)}건</span>}>
-        <div className="panel-body flex flex-wrap items-center gap-2">
-          {catalog.lineSignals.map((s) => (
-            <Chip key={s.id} on={signal === s.id} onClick={() => setSignal(s.id)}>{s.ko}</Chip>
-          ))}
-          <label className="ml-3 flex items-center gap-2 text-[12px] text-faint">
-            최소 점수 <span className="num w-6 text-fg">{minScore}</span>
-            <input type="range" min={0} max={100} value={minScore} onChange={(e) => setMinScore(Number(e.target.value))} className="w-32 cursor-pointer accent-[var(--accent)]" />
-          </label>
-        </div>
-        <p className="px-3.5 pb-3 pt-0 text-[11px] leading-relaxed text-faint">
-          {signal === 'volume_breakout_pullback'
-            ? '변곡점 저항선을 평소 거래량의 1.8배 이상으로 돌파한 뒤, 그 선까지 되돌아와 아직 지키고 있는 종목이에요.'
-            : '3일선과 5일선이 상승 중이고, 저가가 이평선에 닿았다가 종가는 그 위에서 마감한 종목이에요.'}
-        </p>
-      </Card>
-
-      <Card>
-        <div className="scroll-x">
-          <table className="tbl min-w-[1200px]">
-            <thead>
-              <tr>
-                <th className="l">종목</th>
-                <th>점수</th>
-                <th>종가</th>
-                <th>등락률</th>
-                <th className="l">{signal === 'volume_breakout_pullback' ? '돌파 정보' : '지지 이평선'}</th>
-                <th className="l">동반 패턴</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 && <Empty>잡힌 시그널이 없어요.</Empty>}
-              {rows.map((r, i) => {
-                const d = r.detail as Record<string, unknown>;
-                const key = `${r.symbol}-${r.signal}`;
-                const supports = (d.supports as Array<{ period: number; ma: number; date: string }> | undefined) ?? [];
-                const line = d.line as { price: number } | undefined;
-                const chg = r.change_pct === null ? null : Number(r.change_pct);
-                return (
-                  <Fragment key={key}>
-                    <tr className="rise" style={{ animationDelay: `${Math.min(i, 14) * 18}ms` }}>
-                      <td className="l"><SymbolCell row={r} /></td>
-                      <td className="num font-semibold">{Number(r.score).toFixed(0)}</td>
-                      <td className="num">{num(r.close === null ? null : Number(r.close))}</td>
-                      <td className={`num ${(chg ?? 0) >= 0 ? 'up' : 'down'}`}>{chg === null ? '-' : signed(chg)}</td>
-                      <td className="l text-[12.5px] text-mute">
-                        {r.signal === 'volume_breakout_pullback' ? (
-                          <>
-                            <b className="num text-fg">{num(line?.price ?? null)}</b>원 선 ·{' '}
-                            <span className="num">{String(d.breakoutDate ?? '')}</span> 돌파 · 거래량{' '}
-                            <b className="num up">{String(d.volumeRatio ?? '')}배</b> · 이격{' '}
-                            <span className="num">{String(d.distanceToLinePct ?? '')}%</span>
-                          </>
-                        ) : (
-                          <>
-                            {supports.map((s) => `${s.period}일선 ${nf.format(Math.round(s.ma))} (${s.date})`).join(' · ')}
-                            {d.aboveMa20 ? ' · 20일선 위' : ''}
-                          </>
-                        )}
-                      </td>
-                      <td className="l">
-                        <PatternTags
-                          patterns={(r.patterns ?? []).map((p) => ({
-                            ...p,
-                            ko: catalog.patterns.find((c) => c.id === p.pattern)?.ko ?? p.pattern,
-                            stageKo: catalog.stages.find((s) => s.id === p.stage)?.ko,
-                          }))}
-                        />
-                      </td>
-                      <td className="w-px whitespace-nowrap">
-                        <button onClick={() => setOpen(open === key ? null : key)} className="chip !px-2.5 !py-1 !text-[12px]">
-                          근거
-                        </button>
-                      </td>
-                    </tr>
-                    {open === key && (
-                      <tr>
-                        <td colSpan={7} className="l !p-0">
-                          <pre className="max-h-72 overflow-auto bg-[rgb(0_0_0/0.22)] p-3 font-mono text-[11px] leading-relaxed text-mute">
-                            {JSON.stringify(r.detail, null, 2)}
-                          </pre>
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    </div>
-  );
 }
