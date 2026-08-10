@@ -468,6 +468,19 @@ input[type='date']::-webkit-calendar-picker-indicator {
   to { --beam: 360deg; }
 }
 
+.spinner {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  animation: spin 700ms linear infinite;
+  flex: none;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 /* --------------------------- 모션 ---------------------------
    숫자 카운트업은 데이터가 방금 갱신됐다는 신호다. 그 외에는 조작 반응만 둔다.
    표가 스크롤될 때마다 행이 떠오르면 읽는 속도가 떨어진다. */

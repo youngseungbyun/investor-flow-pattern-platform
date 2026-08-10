@@ -546,9 +546,12 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
   const [notes, setNotes] = useState<string[]>([]);
   const [sources, setSources] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [searchErr, setSearchErr] = useState<string | null>(null);
+  const [ranAt, setRanAt] = useState<string | null>(null);
 
   const run = useCallback(async () => {
     setLoading(true);
+    setSearchErr(null);
     try {
       // 기간 모드면 수급 관찰 창(windowDays)을 그 기간의 거래일 수로 덮어쓴다.
       const winFromRange = fromDate
@@ -562,10 +565,20 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      const j = await res.json();
+      const j = await res.json().catch(() => null);
+      if (!res.ok || !j || typeof j.error === 'string') {
+        throw new Error(j?.error ?? `서버가 ${res.status} 로 응답했어요`);
+      }
       setRows(j.rows ?? []);
-      setNotes(j.notes ?? (j.error ? [j.error] : []));
+      setNotes(j.notes ?? []);
       setSources(j.sources ?? []);
+      setRanAt(new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    } catch (e: unknown) {
+      // 실패했는데 이전 결과가 남아 있으면 성공한 것으로 오해한다. 결과를 비운다.
+      setRows(null);
+      setNotes([]);
+      setSources([]);
+      setSearchErr(e instanceof Error ? e.message : '검색에 실패했어요');
     } finally {
       setLoading(false);
     }
@@ -604,10 +617,25 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
         title="조건 검색"
         sub="수급, 패턴 위치, 라인 시그널을 겹쳐서 걸러요"
         right={
-          <button onClick={() => void run()} className="btn btn-beam" disabled={loading}>
-            {Icon.search}
-            {loading ? '찾는 중' : '검색'}
-          </button>
+          <div className="flex shrink-0 flex-col items-end gap-1.5">
+            <button
+              onClick={() => void run()}
+              className="btn btn-beam"
+              disabled={loading}
+              aria-busy={loading}
+            >
+              {loading ? <span className="spinner" aria-hidden /> : Icon.search}
+              {loading ? '찾는 중' : '검색'}
+            </button>
+            {searchErr ? (
+              <span className="flex max-w-[320px] items-start gap-1.5 text-right text-[12px] text-up">
+                <span aria-hidden>!</span>
+                <span>{searchErr}</span>
+              </span>
+            ) : ranAt && !loading ? (
+              <span className="num text-[11.5px] text-faint">{ranAt} 기준</span>
+            ) : null}
+          </div>
         }
       >
         <div className="panel-body space-y-2.5">
