@@ -15,7 +15,8 @@
     "supabase:check": "tsx scripts/supabase.ts check",
     "supabase:sync": "tsx scripts/supabase.ts sync",
     "db:sync": "tsx scripts/supabase.ts sync",
-    "db:check": "tsx scripts/supabase.ts check"
+    "db:check": "tsx scripts/supabase.ts check",
+    "db:retention": "tsx scripts/retention.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",
