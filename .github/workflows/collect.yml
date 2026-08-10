@@ -46,7 +46,10 @@ jobs:
           node-version: '20'
           cache: npm
 
-      - run: npm ci
+      # npm ci 는 lock 과 package.json 이 완전히 일치할 때만 돈다.
+      # 이 저장소는 의존성을 넣었다 뺀 이력이 있어 러너에서 불일치가 났다.
+      # 수집 잡은 재현성보다 안정적으로 도는 게 중요하므로 install 을 쓴다.
+      - run: npm install --no-audit --no-fund
 
       - name: 기준일 결정
         id: d
