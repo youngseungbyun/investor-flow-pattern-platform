@@ -37,6 +37,10 @@ export const env = {
    */
   databaseUrl:
     str('DATABASE_URL') ||
+    // Netlify DB 가 실제로 주입하는 이름은 NETLIFY_DB_URL 이다.
+    // 문서·홍보 이미지에 보이는 NETLIFY_DATABASE_URL 은 구 확장 시절 이름이라
+    // 그것만 읽으면 영원히 못 찾는다. 둘 다 본다.
+    str('NETLIFY_DB_URL') ||
     str('NETLIFY_DATABASE_URL') ||
     str('NETLIFY_DATABASE_URL_UNPOOLED') ||
     'postgres://postgres:postgres@127.0.0.1:55432/postgres',
