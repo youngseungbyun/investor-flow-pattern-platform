@@ -231,6 +231,29 @@ export async function runRule(rule: Rule): Promise<RuleResult> {
     return { rule, windowDates: [], rows: [], notes: ['거래일 캘린더에 해당 기간이 없습니다.'], sources: [] };
   }
 
+  // 수집이 끝나지 않은 날을 기준일로 잡으면 아무 조건이나 0건이 나온다.
+  // 화면에는 "조건이 빡세다"로만 보여서 원인을 찾을 수 없었다.
+  // 거래일 달력은 수급만 들어와도 개장으로 표시되는데 일봉·패턴은 그보다 늦게 채워진다.
+  // 날짜 하나짜리 인덱스 조회 두 번이라 매 검색에 붙여도 부담이 없다.
+  const cov = (
+    await query<{ bars: string; prev: string; hits: string }>(
+      `select (select count(*)::text from ohlcv_daily where date = $1::date) bars,
+              (select count(*)::text from ohlcv_daily
+                where date = (select max(date) from ohlcv_daily where date < $1::date)) prev,
+              (select count(*)::text from pattern_hits where date = $1::date) hits`,
+      [rule.date],
+    )
+  )[0];
+  const bars = Number(cov?.bars ?? 0);
+  const prevBars = Number(cov?.prev ?? 0);
+  if (prevBars > 0 && bars < prevBars * 0.6) {
+    notes.push(
+      `${rule.date} 은 아직 수집 중이에요. 일봉이 ${bars.toLocaleString('ko-KR')}/${prevBars.toLocaleString('ko-KR')}종목만 들어왔어요. 기준일을 이전 거래일로 옮겨 보세요.`,
+    );
+  } else if (rule.pattern && Number(cov?.hits ?? 0) === 0) {
+    notes.push(`${rule.date} 의 패턴 판정 결과가 없어요. 패턴 조건을 끄거나 기준일을 옮겨 보세요.`);
+  }
+
   /* 1) 패턴 후보 */
   const pc = rule.pattern;
   const patternRows = await query<{
@@ -277,7 +300,8 @@ export async function runRule(rule: Rule): Promise<RuleResult> {
   const requirePattern = Boolean(pc && (pc.patterns?.length || pc.directions?.length || pc.stages?.length));
   let candidates: string[] | null = requirePattern ? [...patternBySymbol.keys()] : null;
   if (requirePattern && candidates && candidates.length === 0) {
-    return { rule, windowDates: dates, rows: [], notes: ['패턴 조건을 만족하는 종목이 없습니다.'], sources: [] };
+    notes.push('패턴 조건을 만족하는 종목이 없습니다.');
+    return { rule, windowDates: dates, rows: [], notes, sources: [] };
   }
 
   /* 2) 수급 조건 AND 결합 */

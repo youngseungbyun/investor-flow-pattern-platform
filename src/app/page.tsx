@@ -155,7 +155,10 @@ export default function Dashboard() {
       });
   }, []);
 
-  const lastDay = String(status?.counts?.last_trading_day ?? '');
+  // 기본 기준일은 "수집이 끝난" 최신 거래일이다. 거래일 달력의 최신일(last_trading_day)은
+  // 수급만 들어와도 개장으로 잡혀서, 일봉·패턴이 아직 없는 반쯤 찬 날을 가리킬 때가 있다.
+  // 그 날을 기본으로 두면 어떤 조건을 걸어도 0건이라 "검색이 안 된다"로 보인다.
+  const lastDay = String(status?.counts?.last_complete_day || status?.counts?.last_trading_day || '');
   useEffect(() => { if (lastDay && !date) setDate(lastDay); }, [lastDay, date]);
 
   return (
@@ -386,9 +389,16 @@ function MarketChart({ status, catalog }: { status: Status | null; catalog: Cata
                 }`}
                 aria-hidden
               />
-              최근 거래일 {status.counts.last_trading_day ?? '-'}
+              분석 기준 {status.counts.last_complete_day ?? status.counts.last_trading_day ?? '-'}
             </span>
           )}
+          {/* 장은 열렸는데 아직 수집이 안 끝난 날이 있으면 밝혀 둔다.
+              이 사실을 숨기면 "왜 오늘 게 없지"가 된다. */}
+          {status?.counts?.last_trading_day &&
+            status.counts.last_complete_day &&
+            status.counts.last_trading_day !== status.counts.last_complete_day && (
+              <span className="text-warn">{status.counts.last_trading_day} 수집 중</span>
+            )}
           <span>수급 {num(n('flow_daily'))}행</span>
           <span>일봉 {num(n('ohlcv'))}행</span>
           <span>패턴 {num(n('patterns'))}건 (돌파 확정 {num(n('patterns_confirmed'))})</span>

@@ -81,15 +81,19 @@ jobs:
       - name: 투자자 수급
         run: npm run batch -- flow --date ${{ steps.d.outputs.date }} --lookback ${{ github.event.inputs.lookback || 5 }}
 
+      # 수급을 받은 직후에 바로 정규화한다. 예전에는 공시·패턴 뒤에 있었는데,
+      # 그 사이 단계가 어긋나면 조건 검색이 보는 유일한 테이블에 구멍이 남았다.
+      # 실제로 08-10·08-11 이틀이 비어 어떤 수급 조건도 0건이 나왔다.
+      # 조회 창을 넉넉히 잡아 이전 회차가 흘린 날짜까지 같이 메운다.
+      - name: 수급 이벤트 정규화
+        run: npm run batch -- flow-events --date ${{ steps.d.outputs.date }} --lookback 10
+
       - name: 공시 (유통주식수·임원 매매)
         run: npm run batch -- dart --date ${{ steps.d.outputs.date }}
         continue-on-error: true
 
       - name: 패턴 판정
         run: npm run batch -- patterns --date ${{ steps.d.outputs.date }}
-
-      - name: 수급 이벤트 정규화
-        run: npm run batch -- flow-events --date ${{ steps.d.outputs.date }}
 
       - name: 지지선·시그널
         run: npm run batch -- lines --date ${{ steps.d.outputs.date }}

@@ -214,8 +214,11 @@ async function statusPayload() {
   );
   const counts = await query(
     `select
-       (select count(*) from ohlcv_daily)          as ohlcv,
-       (select count(*) from investor_flow_daily)  as flow_daily,
+       -- 큰 테이블은 정확한 count(*) 가 전수 스캔이다. 일봉이 100만 행이 되면서
+       -- 상태 조회 한 번에 1초 넘게 걸렸고 콜드 스타트가 겹치면 함수가 타임아웃했다.
+       -- 화면에 쓰는 값은 규모 표시용이라 통계 추정치로 충분하다.
+       greatest((select reltuples from pg_class where oid = to_regclass('ohlcv_daily')), 0)::bigint         as ohlcv,
+       greatest((select reltuples from pg_class where oid = to_regclass('investor_flow_daily')), 0)::bigint as flow_daily,
        (select count(*) from investor_flow_period) as flow_period,
        (select count(*) from insider_trades)       as insider,
        (select count(*) from pattern_hits)         as patterns,
@@ -223,7 +226,13 @@ async function statusPayload() {
        (select count(*) from instruments)          as instruments,
        (select count(*) from instruments where free_float_basis = 'computed') as float_computed,
        (select to_char(max(date),'YYYY-MM-DD') from trading_days where is_open) as last_trading_day,
-       (select string_agg(distinct source, ', ') from investor_flow_daily) as flow_source`,
+       -- 화면이 기본으로 잡아야 할 날. 거래일 달력은 수급만 들어와도 개장으로 표시되지만
+       -- 일봉·패턴은 그보다 늦게 채워진다. 그 반쯤 찬 날을 기본값으로 두면
+       -- 어떤 조건을 걸어도 0건이 나와 "검색이 안 된다"로 보인다.
+       (select to_char(max(date),'YYYY-MM-DD') from pattern_hits) as last_complete_day,
+       -- 원천 표시도 전수 스캔이었다. 최근 것만 본다.
+       (select string_agg(distinct source, ', ') from investor_flow_daily
+         where date >= (select max(date) - 7 from investor_flow_daily)) as flow_source`,
   );
   const providers = (await activeProviders()).map((p) => ({
     id: p.id,
