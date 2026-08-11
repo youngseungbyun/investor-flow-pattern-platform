@@ -384,7 +384,26 @@ export async function runRule(rule: Rule): Promise<RuleResult> {
       return { rule, windowDates: dates, rows: [], notes, sources: [] };
     }
   }
-  if (!candidates) candidates = [];
+  // 세 축을 모두 끄면 후보가 비어 결과가 0건이 된다. 그건 "조건 없음"이지
+  // "해당 없음"이 아니므로, 거래대금 상위로 채워 목록을 보여 준다.
+  if (!candidates) {
+    const all = await query<{ symbol: string }>(
+      `select o.symbol
+         from ohlcv_daily o
+         join instruments i on i.symbol = o.symbol
+        where o.date = $1::date and o.traded_value >= $2
+          and ($3 = 'ALL' or i.market = $3)
+        order by o.traded_value desc
+        limit $4`,
+      [rule.date, rule.minTradedValue, rule.market, rule.limit],
+    );
+    candidates = all.map((r) => r.symbol);
+    if (candidates.length === 0) {
+      notes.push('조건을 하나도 걸지 않았는데 기준일 시세가 없어요. 기준일을 바꿔 보세요.');
+      return { rule, windowDates: dates, rows: [], notes, sources: [] };
+    }
+    notes.push('조건을 걸지 않아 거래대금 상위 순으로 보여줍니다.');
+  }
 
   /* 3) 라인 조건 */
   const lineRows = await query<{ symbol: string; signal: string; score: string; detail_json: Record<string, unknown> }>(

@@ -527,6 +527,10 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
   const [sources, setSources] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchErr, setSearchErr] = useState<string | null>(null);
+  // 세 축을 각각 껐다 켠다. 끄면 그 축은 조건에서 아예 빠진다.
+  const [useFlow, setUseFlow] = useState(true);
+  const [usePattern, setUsePattern] = useState(true);
+  const [useLine, setUseLine] = useState(false);
   const [ranAt, setRanAt] = useState<string | null>(null);
 
   const run = useCallback(async () => {
@@ -537,9 +541,16 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
       const winFromRange = fromDate
         ? Math.max(1, Math.round(((new Date(date).getTime() - new Date(fromDate).getTime()) / 86_400_000) * 0.7))
         : null;
-      const body = winFromRange
-        ? { ...rule, date, flow: rule.flow.map((f) => ({ ...f, windowDays: winFromRange })) }
-        : { ...rule, date };
+      const flow = useFlow
+        ? rule.flow.map((f) => (winFromRange ? { ...f, windowDays: winFromRange } : f))
+        : [];
+      const body: RuleBody & { date: string } = {
+        ...rule,
+        date,
+        flow,
+        pattern: usePattern ? rule.pattern : undefined,
+        line: useLine ? rule.line : undefined,
+      };
       const res = await fetch('/api/rule', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -562,7 +573,7 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
     } finally {
       setLoading(false);
     }
-  }, [rule, date, fromDate]);
+  }, [rule, date, fromDate, useFlow, usePattern, useLine]);
 
   useEffect(() => { void run(); }, [date]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -595,7 +606,7 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
     <div className="space-y-4">
       <Card
         title="조건 검색"
-        sub="수급, 패턴 위치, 라인 시그널을 겹쳐서 걸러요"
+        sub="쓸 조건만 켜서 겹쳐 거릅니다. 셋 다 꺼면 거래대금 상위로 보여줘요"
         right={
           <div className="flex shrink-0 flex-col items-end gap-1.5">
             <button
@@ -618,8 +629,26 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
           </div>
         }
       >
-        <div className="panel-body space-y-2.5">
-          {/* 수급 조건 */}
+        <div className="panel-body">
+          <div className="rail">
+          <section className={`panel ${useFlow ? '' : 'axis-off'}`}>
+            <div className="panel-head">
+              <div>
+                <h3 className="panel-title">수급</h3>
+                <p className="panel-desc">주체별 순매수 강도로 거릅니다</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setUseFlow((v) => !v)}
+                className="chip shrink-0"
+                data-on={useFlow ? 'true' : 'false'}
+                aria-pressed={useFlow}
+              >
+                {useFlow ? '사용 중' : 'off'}
+              </button>
+            </div>
+            <div className="panel-body">
+{/* 수급 조건 */}
           <div className="space-y-1.5">
             {rule.flow.map((f, i) => (
               <div key={i} className="flex flex-wrap items-center gap-1.5 glass-inset px-2.5 py-2">
@@ -686,8 +715,26 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
               )}
             </div>
           </div>
-
-          {/* 패턴 조건 */}
+            </div>
+          </section>
+          <section className={`panel ${usePattern ? '' : 'axis-off'}`}>
+            <div className="panel-head">
+              <div>
+                <h3 className="panel-title">패턴</h3>
+                <p className="panel-desc">지금 어느 단계에 있는지로 거릅니다</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setUsePattern((v) => !v)}
+                className="chip shrink-0"
+                data-on={usePattern ? 'true' : 'false'}
+                aria-pressed={usePattern}
+              >
+                {usePattern ? '사용 중' : 'off'}
+              </button>
+            </div>
+            <div className="panel-body">
+{/* 패턴 조건 */}
           <div className="glass-inset px-2.5 py-2">
             <div className="mb-1.5 flex items-center gap-2">
               <span className="tag tag-violet font-semibold">패턴</span>
@@ -748,8 +795,26 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
               </label>
             </div>
           </div>
-
-          {/* 라인 + 공통 */}
+            </div>
+          </section>
+          <section className={`panel ${useLine ? '' : 'axis-off'}`}>
+            <div className="panel-head">
+              <div>
+                <h3 className="panel-title">라인 · 공통</h3>
+                <p className="panel-desc">지지선 시그널과 시장·정렬을 정합니다</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setUseLine((v) => !v)}
+                className="chip shrink-0"
+                data-on={useLine ? 'true' : 'false'}
+                aria-pressed={useLine}
+              >
+                {useLine ? '사용 중' : 'off'}
+              </button>
+            </div>
+            <div className="panel-body">
+{/* 라인 + 공통 */}
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 glass-inset px-2.5 py-2">
             <span className="tag tag-violet font-semibold">라인</span>
             {catalog.lineSignals.map((s) => (
@@ -781,6 +846,9 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
               <option value="score">패턴 점수</option>
               <option value="traded_value">거래대금</option>
             </select>
+          </div>
+            </div>
+          </section>
           </div>
         </div>
       </Card>
