@@ -456,7 +456,7 @@ export default function PriceChart({
         attributionLogo: false,
       },
       grid: { vertLines: { color: t.grid }, horzLines: { color: t.grid } },
-      rightPriceScale: { borderColor: t.border, scaleMargins: { top: 0.08, bottom: 0.26 } },
+      rightPriceScale: { borderColor: t.border, scaleMargins: { top: 0.08, bottom: 0.06 } },
       timeScale: { borderColor: t.border, rightOffset: 6 },
       crosshair: {
         vertLine: { color: t.accent, labelBackgroundColor: t.accent },
@@ -472,11 +472,12 @@ export default function PriceChart({
       wickUpColor: t.up,
       wickDownColor: t.down,
     });
-    const volume = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: 'volume' },
-      priceScaleId: 'vol',
-    });
-    chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
+    // 거래량은 별도 페인에 둔다. 같은 가격축 아래쪽에 얹으면 눈금이 데이터 구간
+    // 바깥까지 이어져 "-25,000원" 같은 없는 가격이 축에 찍힌다.
+    // 값 폭이 좁을 땐 안 보이다가 18개월치를 넣자마자 드러났다.
+    const volume = chart.addSeries(HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: '' }, 1);
+    const panes = chart.panes();
+    if (panes[1]) panes[1].setHeight(96);
 
     chartRef.current = chart;
     candleRef.current = candles;
