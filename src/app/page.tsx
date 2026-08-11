@@ -286,7 +286,7 @@ function MarketChart({ status, catalog }: { status: Status | null; catalog: Cata
         <div>
           <h2 className="panel-title">주체별 순매수 추이와 지수</h2>
           <p className="panel-desc">
-            고른 주체의 순매수 금액을 KOSPI 지수와 겹쳐 봅니다. 지수는 보유 일봉을 시가총액 가중해 산출한 근사치로, 시작일이 100입니다.
+            고른 주체의 순매수 금액을 시장 지수와 겹쳐 봅니다. 지수는 KOSPI 종목의 일별 수익률 중앙값을 연쇄한 값으로, 시작일이 100입니다.
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
@@ -340,12 +340,12 @@ function MarketChart({ status, catalog }: { status: Status | null; catalog: Cata
                   labelStyle={{ color: 'var(--fg-2)' }}
                   formatter={(v, name) =>
                     String(name) === 'kospi'
-                      ? [Number(v ?? 0).toFixed(2), '지수(=100 기준)']
+                      ? [Number(v ?? 0).toFixed(2), '시장 지수(시작=100)']
                       : [`${nf.format(Number(v ?? 0))}억`, koLabel(String(name))]
                   }
                 />
                 <Legend
-                  formatter={(value) => (String(value) === 'kospi' ? 'KOSPI 지수' : koLabel(String(value)))}
+                  formatter={(value) => (String(value) === 'kospi' ? '시장 지수' : koLabel(String(value)))}
                   wrapperStyle={{ fontSize: 11.5, color: 'var(--fg-2)' }}
                 />
                 {picked.map((t) => (

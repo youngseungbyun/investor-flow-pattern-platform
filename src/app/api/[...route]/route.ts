@@ -141,30 +141,41 @@ async function marketSeries(q: URLSearchParams) {
    * 산출한 근사치다. 시작일을 100 으로 두고 상대 변화만 본다.
    * 수급과 지수의 방향 비교가 목적이라 절대 레벨은 필요 없다.
    */
-  // 구성종목을 고정해야 한다. 날짜마다 있는 종목이 다르면(예: 폴백 수집으로
-  // 일부만 채운 날) 지수가 종목 수 변화로 꺾여 시세와 무관한 그래프가 나온다.
-  // 구간 전 거래일에 빠짐없이 존재하는 종목만 쓴다.
+  /**
+   * 시장 지수. 별도 지수 데이터를 받지 않고 보유 일봉으로 만든다.
+   *
+   * 시가총액 가중은 쓰지 않는다. 날짜마다 존재하는 종목이 다르면(폴백 수집으로
+   * 일부만 채운 날) 합계가 종목 수를 따라 움직여 시세와 무관한 선이 나온다.
+   * 실제로 그 방식은 30거래일에 25% 하락으로 찍혔다.
+   *
+   * 대신 구성종목을 구간 내내 존재하는 것으로 고정하고, 일별 수익률의
+   * 중앙값을 연쇄한다. 중앙값이라 소수 종목의 급등락에도 흔들리지 않는다.
+   */
   const idx = await query<{ d: string; v: string }>(
     `with span as (
        select date from trading_days where is_open and date >= $1::date
-     ), full_members as (
+     ), members as (
        select o.symbol
          from ohlcv_daily o
          join instruments i on i.symbol = o.symbol
-        where o.date >= $1::date and i.market = 'KOSPI' and i.listed_shares > 0
+        where o.date >= $1::date and i.market = 'KOSPI'
         group by o.symbol
        having count(distinct o.date) = (select count(*) from span)
+     ), rets as (
+       select o.date,
+              o.c / nullif(lag(o.c) over (partition by o.symbol order by o.date), 0) - 1 as r
+         from ohlcv_daily o
+        where o.date >= $1::date and o.symbol in (select symbol from members)
      )
-     select to_char(o.date,'YYYY-MM-DD') d,
-            sum(o.c::numeric * i.listed_shares::numeric)::text v
-       from ohlcv_daily o
-       join instruments i on i.symbol = o.symbol
-      where o.date >= $1::date and o.symbol in (select symbol from full_members)
-      group by o.date
-      order by o.date`,
+     select to_char(date,'YYYY-MM-DD') d,
+            coalesce(percentile_cont(0.5) within group (order by r), 0)::text v
+       from rets
+      where r is not null
+      group by date
+      order by date`,
     [from],
   );
-  const base = Number(idx[0]?.v ?? 0);
+
 
   const byDate = new Map<string, Record<string, string | number>>();
   for (const d of dates) byDate.set(d, { date: d.slice(5) });
@@ -172,9 +183,12 @@ async function marketSeries(q: URLSearchParams) {
     const row = byDate.get(r.d);
     if (row) row[r.t] = Math.round(Number(r.amt) / 1e8); // 억원
   }
+  // 중앙값 수익률을 연쇄해 시작일 100 기준의 지수로 만든다.
+  let level = 100;
   for (const r of idx) {
+    level *= 1 + Number(r.v);
     const row = byDate.get(r.d);
-    if (row && base > 0) row.kospi = Number(((Number(r.v) / base) * 100).toFixed(2));
+    if (row) row.kospi = Number(level.toFixed(2));
   }
 
   const rows = [...byDate.values()];
