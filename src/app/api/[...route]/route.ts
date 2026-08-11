@@ -141,12 +141,25 @@ async function marketSeries(q: URLSearchParams) {
    * 산출한 근사치다. 시작일을 100 으로 두고 상대 변화만 본다.
    * 수급과 지수의 방향 비교가 목적이라 절대 레벨은 필요 없다.
    */
+  // 구성종목을 고정해야 한다. 날짜마다 있는 종목이 다르면(예: 폴백 수집으로
+  // 일부만 채운 날) 지수가 종목 수 변화로 꺾여 시세와 무관한 그래프가 나온다.
+  // 구간 전 거래일에 빠짐없이 존재하는 종목만 쓴다.
   const idx = await query<{ d: string; v: string }>(
-    `select to_char(o.date,'YYYY-MM-DD') d,
+    `with span as (
+       select date from trading_days where is_open and date >= $1::date
+     ), full_members as (
+       select o.symbol
+         from ohlcv_daily o
+         join instruments i on i.symbol = o.symbol
+        where o.date >= $1::date and i.market = 'KOSPI' and i.listed_shares > 0
+        group by o.symbol
+       having count(distinct o.date) = (select count(*) from span)
+     )
+     select to_char(o.date,'YYYY-MM-DD') d,
             sum(o.c::numeric * i.listed_shares::numeric)::text v
        from ohlcv_daily o
        join instruments i on i.symbol = o.symbol
-      where o.date >= $1::date and i.market = 'KOSPI' and i.listed_shares > 0
+      where o.date >= $1::date and o.symbol in (select symbol from full_members)
       group by o.date
       order by o.date`,
     [from],
