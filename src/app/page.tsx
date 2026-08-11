@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { MagnifyingGlass, Moon, Plus, Sun, X } from '@phosphor-icons/react/dist/ssr';
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import NumberTicker from '@/components/NumberTicker';
 
 /* ══════════════════════════ 타입 ══════════════════════════ */
@@ -216,7 +216,7 @@ export default function Dashboard() {
       </header>
 
       <div className="mx-auto max-w-[1720px] space-y-4 px-5 py-5">
-        {loadError ? <LoadError message={loadError} /> : <KpiRow status={status} catalog={catalog} />}
+        {loadError ? <LoadError message={loadError} /> : <MarketChart status={status} catalog={catalog} />}
         {loadError ? null : !date || !catalog ? (
           <Skeleton />
         ) : (
@@ -235,140 +235,155 @@ export default function Dashboard() {
 
 interface SeriesRow {
   date: string;
-  individual?: number;
-  foreign?: number;
-  institution_total?: number;
+  kospi?: number;
+  [k: string]: string | number | undefined;
 }
 
-/** 종목 상세와 같은 색 규약: 개인 적, 외국인 청, 기관 녹. */
-const PULSE_SERIES = [
-  { key: 'individual', ko: '개인', color: 'var(--up)' },
-  { key: 'foreign', ko: '외국인', color: 'var(--down)' },
-  { key: 'institution_total', ko: '기관', color: 'var(--ok)' },
-] as const;
+/** 주체별 선 색. 개인 적 · 외국인 청은 시세 관행과 같은 축에 둔다. */
+const FLOW_COLOR: Record<string, string> = {
+  individual: 'var(--up)',
+  foreign: 'var(--down)',
+  other_foreign: '#7aa8ff',
+  institution_total: 'var(--ok)',
+  financial_investment: '#c084fc',
+  insurance: '#f472b6',
+  investment_trust: '#38bdf8',
+  private_fund: 'var(--gold)',
+  bank: '#a3a3a3',
+  other_finance: '#94a3b8',
+  pension: '#34d399',
+  other_corp: '#fb923c',
+};
 
-function KpiRow({ status, catalog }: { status: Status | null; catalog: Catalog | null }) {
-  const [series, setSeries] = useState<SeriesRow[] | null>(null);
+function MarketChart({ status, catalog }: { status: Status | null; catalog: Catalog | null }) {
+  const [picked, setPicked] = useState<string[]>(['private_fund', 'foreign', 'individual']);
+  const [cum, setCum] = useState(true);
+  const [days, setDays] = useState(60);
+  const [rows, setRows] = useState<SeriesRow[] | null>(null);
+
   useEffect(() => {
-    fetch('/api/series').then((r) => r.json()).then((d) => setSeries(d.rows ?? [])).catch(() => setSeries([]));
-  }, []);
+    setRows(null);
+    const q = new URLSearchParams({
+      investors: picked.join(','),
+      days: String(days),
+      mode: cum ? 'cumulative' : 'daily',
+    });
+    fetch(`/api/series?${q}`)
+      .then((r) => r.json())
+      .then((d) => setRows(d.rows ?? []))
+      .catch(() => setRows([]));
+  }, [picked, cum, days]);
 
-  if (!status?.runs || !status.counts) {
-    return (
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[2fr_1fr]">
-        <div className="panel p-4">
-          <div className="skel h-3 w-24" />
-          <div className="skel mt-3 h-[260px] w-full" />
-        </div>
-        <div className="grid grid-rows-2 gap-3">
-          <div className="panel p-4"><div className="skel h-3 w-16" /><div className="skel mt-2.5 h-7 w-28" /></div>
-          <div className="panel p-4"><div className="skel h-3 w-16" /><div className="skel mt-2.5 h-7 w-28" /></div>
-        </div>
-      </div>
-    );
-  }
+  const koLabel = (id: string) => catalog?.investors.find((x) => x.id === id)?.ko ?? id;
+  const toggle = (id: string) =>
+    setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : p.length >= 6 ? p : [...p, id]));
 
-  const latest = status.runs[0];
-  const failed = status.runs.filter((r) => r.status === 'failed');
-  const n = (k: string) => Number(status.counts[k] ?? 0);
+  const n = (k: string) => Number(status?.counts?.[k] ?? 0);
 
   return (
-    <section className="space-y-3">
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[2fr_1fr]">
-        {/* 시장 수급 미니 차트. 오늘 시장에 누가 사고 있는지가 첫 화면의 답이어야 한다. */}
-        <div className="panel flex flex-col p-4">
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <span className="kpi-label">시장 수급 30일</span>
-            <span className="flex items-center gap-3 text-[11.5px] text-mute">
-              {PULSE_SERIES.map((sr) => (
-                <span key={sr.key} className="flex items-center gap-1.5">
-                  <span className="inline-block h-[2px] w-3.5" style={{ background: sr.color }} aria-hidden />
-                  {sr.ko}
-                </span>
-              ))}
-            </span>
-          </div>
-          <div className="mt-3 h-[260px]">
-            {series === null ? (
-              <div className="skel h-full w-full" />
-            ) : series.length === 0 ? (
-              <p className="flex h-full items-center text-[12.5px] text-faint">
-                수급 데이터가 아직 없어요. 장 마감 후 수집하면 여기에 흐름이 그려져요.
-              </p>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={series} margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
-                  <defs>
-                    {PULSE_SERIES.map((sr) => (
-                      <linearGradient key={sr.key} id={`pulse-${sr.key}`} x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor={sr.color} stopOpacity={0.22} />
-                        <stop offset="100%" stopColor={sr.color} stopOpacity={0} />
-                      </linearGradient>
-                    ))}
-                  </defs>
-                  <CartesianGrid stroke="var(--line)" strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="date" tick={{ fontSize: 10.5, fill: 'var(--fg-3)' }} tickLine={false} axisLine={false} minTickGap={28} />
-                  <YAxis tick={{ fontSize: 10.5, fill: 'var(--fg-3)' }} tickLine={false} axisLine={false} width={40}
-                         tickFormatter={(v) => {
-                           const x = Number(v);
-                           if (x === 0) return '0';
-                           return Math.abs(x) >= 10000 ? `${(x / 10000).toFixed(1).replace(/\.0$/, '')}조` : `${nf.format(x)}억`;
-                         }} />
-                  <Tooltip
-                    contentStyle={{ background: 'var(--s1)', border: '1px solid var(--line-2)', borderRadius: 8, fontSize: 12 }}
-                    labelStyle={{ color: 'var(--fg-2)' }}
-                    formatter={(v, name) => {
-                      const meta = PULSE_SERIES.find((sr) => sr.key === String(name));
-                      return [`${nf.format(Number(v ?? 0))}억`, meta?.ko ?? String(name)];
-                    }}
-                  />
-                  {PULSE_SERIES.map((sr) => (
-                    <Area key={sr.key} type="monotone" dataKey={sr.key} stroke={sr.color} strokeWidth={1.5}
-                          fill={`url(#pulse-${sr.key})`} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
-                  ))}
-                </AreaChart>
-              </ResponsiveContainer>
-            )}
-          </div>
+    <section className="panel">
+      <div className="panel-head flex-wrap gap-y-2">
+        <div>
+          <h2 className="panel-title">주체별 순매수 추이와 지수</h2>
+          <p className="panel-desc">
+            고른 주체의 순매수 금액을 KOSPI 지수와 겹쳐 봅니다. 지수는 보유 일봉을 시가총액 가중해 산출한 근사치로, 시작일이 100입니다.
+          </p>
         </div>
-
-        <div className="grid grid-rows-2 gap-3">
-          <div className="panel p-4 transition-colors hover:border-line-strong">
-            <div className="kpi-label">투자자 수급</div>
-            <div className="kpi-value mt-1.5">
-              <NumberTicker value={n('flow_daily')} />
-              <span className="ml-1 text-[15px] text-mute">행</span>
-            </div>
-            <div className="mt-1.5 text-[12px] text-faint">최근 거래일 {status.counts.last_trading_day ?? '-'}</div>
-          </div>
-          <div className="panel p-4 transition-colors hover:border-line-strong">
-            <div className="kpi-label">패턴 적중</div>
-            <div className="kpi-value mt-1.5">
-              <NumberTicker value={n('patterns')} />
-              <span className="ml-1 text-[15px] text-mute">건</span>
-            </div>
-            <div className="mt-1.5 text-[12px] text-faint">돌파 확정 {num(n('patterns_confirmed'))}건</div>
-          </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+          <Chip on={cum} onClick={() => setCum(true)}>누적</Chip>
+          <Chip on={!cum} onClick={() => setCum(false)}>일별</Chip>
+          <select className="input !py-1 !text-[12px]" value={days} onChange={(e) => setDays(Number(e.target.value))}>
+            <option value={30}>30거래일</option>
+            <option value={60}>60거래일</option>
+            <option value={120}>120거래일</option>
+          </select>
         </div>
       </div>
 
-      {/* 운영 메타는 결정에 쓰는 숫자가 아니라 상태다. 한 줄로 낮춰 둔다. */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-faint">
-        <span className="flex items-center gap-1.5">
-          <span
-            className={`inline-block size-1.5 rounded-full ${
-              status.overall === 'ok' ? 'bg-ok' : status.overall === 'partial' ? 'bg-warn' : 'bg-faint'
-            }`}
-            aria-hidden
-          />
-          마지막 수집 {latest ? `${latest.date} ${latest.ran_at.slice(11)}` : '없음'}
-        </span>
-        <span>일봉 {num(n('ohlcv'))}행</span>
-        <span>종목 {num(n('instruments'))}개</span>
-        <span>유통주식수 실계산 {num(n('float_computed'))}종목</span>
-        {/* 배포본에는 수집용 키가 없다. 키 유무가 아니라 실제 적재된 출처를 보여준다. */}
-        <span>수급 원천 {status.counts.flow_source || '없음'}</span>
-        {failed.length > 0 && <span className="text-warn">수집 실패 {failed.map((f) => f.step).join(', ')}</span>}
+      <div className="panel-body space-y-3">
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="mr-1 text-[12px] text-faint">비교군</span>
+          {(catalog?.investors ?? []).map((iv) => (
+            <Chip key={iv.id} on={picked.includes(iv.id)} onClick={() => toggle(iv.id)}>
+              {iv.ko}
+            </Chip>
+          ))}
+          <span className="ml-1 text-[11.5px] text-faint">최대 6개</span>
+        </div>
+
+        <div className="h-[320px]">
+          {rows === null ? (
+            <div className="skel h-full w-full" />
+          ) : rows.length === 0 || picked.length === 0 ? (
+            <p className="flex h-full items-center justify-center text-[12.5px] text-faint">
+              {picked.length === 0 ? '비교군을 하나 이상 골라 주세요.' : '아직 수급 데이터가 없어요.'}
+            </p>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={rows} margin={{ top: 6, right: 4, bottom: 0, left: 0 }}>
+                <CartesianGrid stroke="var(--line)" strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="date" tick={{ fontSize: 10.5, fill: 'var(--fg-3)' }} tickLine={false} axisLine={false} minTickGap={30} />
+                <YAxis
+                  yAxisId="flow" tick={{ fontSize: 10.5, fill: 'var(--fg-3)' }} tickLine={false} axisLine={false} width={52}
+                  tickFormatter={(v) => {
+                    const x = Number(v);
+                    if (x === 0) return '0';
+                    return Math.abs(x) >= 10000 ? `${(x / 10000).toFixed(1).replace(/\.0$/, '')}조` : `${nf.format(x)}억`;
+                  }}
+                />
+                <YAxis
+                  yAxisId="idx" orientation="right" domain={['dataMin - 2', 'dataMax + 2']}
+                  tick={{ fontSize: 10.5, fill: 'var(--fg-3)' }} tickLine={false} axisLine={false} width={40}
+                />
+                <Tooltip
+                  contentStyle={{ background: 'var(--s1)', border: '1px solid var(--line-2)', borderRadius: 8, fontSize: 12 }}
+                  labelStyle={{ color: 'var(--fg-2)' }}
+                  formatter={(v, name) =>
+                    String(name) === 'kospi'
+                      ? [Number(v ?? 0).toFixed(2), '지수(=100 기준)']
+                      : [`${nf.format(Number(v ?? 0))}억`, koLabel(String(name))]
+                  }
+                />
+                <Legend
+                  formatter={(value) => (String(value) === 'kospi' ? 'KOSPI 지수' : koLabel(String(value)))}
+                  wrapperStyle={{ fontSize: 11.5, color: 'var(--fg-2)' }}
+                />
+                {picked.map((t) => (
+                  <Area
+                    key={t} yAxisId="flow" type="monotone" dataKey={t}
+                    stroke={FLOW_COLOR[t] ?? 'var(--fg-2)'} strokeWidth={1.6}
+                    fill={FLOW_COLOR[t] ?? 'var(--fg-2)'} fillOpacity={0.08}
+                    dot={false} activeDot={{ r: 3 }} isAnimationActive={false}
+                  />
+                ))}
+                <Line
+                  yAxisId="idx" type="monotone" dataKey="kospi"
+                  stroke="var(--fg)" strokeWidth={1.4} strokeDasharray="4 3"
+                  dot={false} isAnimationActive={false}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        {/* 운영 메타는 결정에 쓰는 숫자가 아니라 상태다. 한 줄로 낮춰 둔다. */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-faint">
+          {status && (
+            <span className="flex items-center gap-1.5">
+              <span
+                className={`inline-block size-1.5 rounded-full ${
+                  status.overall === 'ok' ? 'bg-ok' : status.overall === 'partial' ? 'bg-warn' : 'bg-faint'
+                }`}
+                aria-hidden
+              />
+              최근 거래일 {status.counts.last_trading_day ?? '-'}
+            </span>
+          )}
+          <span>수급 {num(n('flow_daily'))}행</span>
+          <span>일봉 {num(n('ohlcv'))}행</span>
+          <span>패턴 {num(n('patterns'))}건 (돌파 확정 {num(n('patterns_confirmed'))})</span>
+          <span>수급 원천 {status?.counts?.flow_source || '없음'}</span>
+        </div>
       </div>
     </section>
   );

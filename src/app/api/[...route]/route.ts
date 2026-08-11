@@ -56,7 +56,7 @@ export async function GET(req: Request, ctx: Ctx) {
       case 'lines':
         return json(await linesPayload(q));
       case 'series':
-        return json(await marketSeries());
+        return json(await marketSeries(q));
       case 'rule':
         return json(await runRule(ruleFromQuery(q)));
       case 'drawings':
@@ -107,22 +107,74 @@ export async function PUT(req: Request, ctx: Ctx) {
  * 시장 전체 수급 30일 시계열. 개인·외국인·기관합계의 일별 순매수 금액 합.
  * 상단 벤토의 미니 차트가 이걸 그린다. 종목 화면과 같은 색 규약을 쓴다.
  */
-async function marketSeries() {
-  const rows = await query<{ d: string; t: string; amt: string }>(
+async function marketSeries(q: URLSearchParams) {
+  // 보고 싶은 주체는 화면에서 갈아끼운다. 기본은 개인·외국인·기관합계.
+  const investors = (q.get('investors') ?? 'individual,foreign,institution_total')
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+  const days = Math.min(240, Math.max(10, Number(q.get('days') ?? 60)));
+  const cumulative = q.get('mode') === 'cumulative';
+
+  const dates = (
+    await query<{ d: string }>(
+      `select to_char(date,'YYYY-MM-DD') d from trading_days
+        where is_open order by date desc limit $1`,
+      [days],
+    )
+  ).map((r) => r.d).reverse();
+  if (dates.length === 0) return { rows: [], investors, cumulative };
+  const from = dates[0];
+
+  const flow = await query<{ d: string; t: string; amt: string }>(
     `select to_char(date,'YYYY-MM-DD') d, investor_type t, sum(net_buy_amount)::bigint amt
        from investor_flow_daily
-      where investor_type in ('individual','foreign','institution_total')
-        and net_buy_amount is not null
+      where investor_type = any($1) and date >= $2::date and net_buy_amount is not null
       group by date, investor_type
       order by date`,
+    [investors, from],
   );
+
+  /**
+   * KOSPI 지수. 별도 지수 데이터를 받지 않고 보유한 일봉으로 시가총액 가중해
+   * 산출한 근사치다. 시작일을 100 으로 두고 상대 변화만 본다.
+   * 수급과 지수의 방향 비교가 목적이라 절대 레벨은 필요 없다.
+   */
+  const idx = await query<{ d: string; v: string }>(
+    `select to_char(o.date,'YYYY-MM-DD') d,
+            sum(o.c::numeric * i.listed_shares::numeric)::text v
+       from ohlcv_daily o
+       join instruments i on i.symbol = o.symbol
+      where o.date >= $1::date and i.market = 'KOSPI' and i.listed_shares > 0
+      group by o.date
+      order by o.date`,
+    [from],
+  );
+  const base = Number(idx[0]?.v ?? 0);
+
   const byDate = new Map<string, Record<string, string | number>>();
-  for (const r of rows) {
-    const row = byDate.get(r.d) ?? { date: r.d.slice(5) };
-    row[r.t] = Math.round(Number(r.amt) / 1e8); // 억원
-    byDate.set(r.d, row);
+  for (const d of dates) byDate.set(d, { date: d.slice(5) });
+  for (const r of flow) {
+    const row = byDate.get(r.d);
+    if (row) row[r.t] = Math.round(Number(r.amt) / 1e8); // 억원
   }
-  return { rows: [...byDate.values()] };
+  for (const r of idx) {
+    const row = byDate.get(r.d);
+    if (row && base > 0) row.kospi = Number(((Number(r.v) / base) * 100).toFixed(2));
+  }
+
+  const rows = [...byDate.values()];
+  if (cumulative) {
+    const acc: Record<string, number> = {};
+    for (const row of rows) {
+      for (const t of investors) {
+        acc[t] = (acc[t] ?? 0) + Number(row[t] ?? 0);
+        row[t] = acc[t];
+      }
+    }
+  }
+  return { rows, investors, cumulative };
 }
 
 async function statusPayload() {
