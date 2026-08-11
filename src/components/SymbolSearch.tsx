@@ -116,6 +116,8 @@ export default function SymbolSearch() {
   };
 
   return (
+    // 입력 폭은 고정이다. 포커스 때 넓어지게 뒀더니 옆의 기준일 컨트롤이 밀려났고,
+    // width 애니메이션이라 열고 닫을 때마다 레이아웃을 다시 계산했다.
     <div ref={boxRef} className="relative">
       <div className="flex items-center gap-1.5 rounded-[var(--r-pill)] bg-surface-3 pl-2.5 pr-1.5">
         <MagnifyingGlass size={14} weight="bold" className="shrink-0 text-faint" />
@@ -130,8 +132,7 @@ export default function SymbolSearch() {
           onKeyDown={onKeyDown}
           placeholder="종목명 · 코드"
           aria-label="종목 바로가기"
-          className="w-[132px] bg-transparent py-[6px] text-[13px] text-fg outline-none placeholder:text-faint focus-visible:w-[188px] sm:w-[168px] sm:focus-visible:w-[240px]"
-          style={{ transition: 'width 180ms cubic-bezier(0.32, 0.72, 0, 1)' }}
+          className="w-[132px] bg-transparent py-[6px] text-[13px] text-fg outline-none placeholder:text-faint sm:w-[184px]"
         />
         {term ? (
           busy ? (
