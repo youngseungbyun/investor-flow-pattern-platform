@@ -143,12 +143,17 @@ export const DEFAULT_RULE: Omit<Rule, 'date'> = {
       agg: 'daily_max',
     },
   ],
+  // 기본값이 다섯 겹으로 겹쳐 있어 어떤 날에도 결과가 0건이었다.
+  // 2026-08-10 실측: 거래대금 836 → 역H&S·컵앤핸들만 361 → 단계 18 → 점수 50 이상 9
+  // → 돌파 후 10봉 3. 사모 0.3% 를 만족하는 33종목과의 교집합은 0.
+  // 종목을 두 개만 지정한 것이 가장 크게 깎았다. 패턴은 비워 전부 보고,
+  // 단계와 점수로만 거른다. 같은 날 이 설정이면 6종목이 남는다.
   pattern: {
-    patterns: ['inverse_head_shoulders', 'cup_with_handle'],
-    stages: ['near_pivot', 'pullback'],
-    minScore: 50,
-    // 돌파한 지 오래된 건 지금 판단에 쓸모가 적다. 기본은 10거래일.
-    maxBarsSinceBreakout: 10,
+    patterns: [],
+    stages: ['near_pivot', 'breakout', 'pullback'],
+    minScore: 40,
+    // 돌파한 지 오래된 건 지금 판단에 쓸모가 적다. 돌파 전(null)은 걸리지 않는다.
+    maxBarsSinceBreakout: 20,
   },
   limit: 100,
   sortBy: 'flow',
@@ -395,8 +400,13 @@ export async function runRule(rule: Rule): Promise<RuleResult> {
       const unit = cond.metric === 'float_pct' ? '%' : cond.metric === 'turnover_x' ? '배' : '';
       const metricKo =
         cond.metric === 'float_pct' ? '유통주식수 대비' : cond.metric === 'turnover_x' ? '평소 거래량 대비' : '순매수';
+      // 수급은 앞 조건이 좁힌 후보 안에서만 찾는다. 그 사실을 안 밝히면
+      // "사모 0.3% 인 종목이 하나도 없다"로 읽힌다. 실제로는 33종목이 있는데
+      // 패턴이 3종목으로 깎아 놓은 탓인데도 원인이 패턴에 있다는 걸 알 수 없다.
+      const pool = candidates ? `앞 조건을 통과한 ${candidates.length}종목 안에서 찾았어요. ` : '';
       notes.push(
-        `${INVESTOR_LABEL[cond.investorType]} ${metricKo} ${cond.value}${unit} ${cond.op === '>=' ? '이상' : '이하'} 조건에 맞는 종목이 없어요. ` +
+        pool +
+          `${INVESTOR_LABEL[cond.investorType]} ${metricKo} ${cond.value}${unit} ${cond.op === '>=' ? '이상' : '이하'} 조건에 맞는 종목이 없어요. ` +
           (Number(o?.n ?? 0) === 0
             ? '이 기간에는 해당 투자자 구분의 데이터가 아직 없어요.'
             : `이 기간 실제 최대는 ${o?.mx ?? '-'}${unit}, 상위 1% 선은 ${o?.p99 ?? '-'}${unit}예요.`),
