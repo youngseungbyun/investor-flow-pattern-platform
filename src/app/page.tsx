@@ -204,7 +204,7 @@ export default function Dashboard() {
             </button>
             <button
               onClick={toggleTheme}
-              className="btn btn-ghost !px-2"
+              className="btn btn-quiet !px-2"
               aria-label={theme === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
               title={theme === 'dark' ? '라이트 모드' : '다크 모드'}
             >
@@ -290,13 +290,18 @@ function MarketChart({ status, catalog }: { status: Status | null; catalog: Cata
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-          <Chip on={cum} onClick={() => setCum(true)}>누적</Chip>
-          <Chip on={!cum} onClick={() => setCum(false)}>일별</Chip>
-          <select className="input !py-1 !text-[12px]" value={days} onChange={(e) => setDays(Number(e.target.value))}>
-            <option value={30}>30거래일</option>
-            <option value={60}>60거래일</option>
-            <option value={120}>120거래일</option>
-          </select>
+          <Segmented
+            label="합산 방식"
+            value={cum ? 'cum' : 'day'}
+            onChange={(v) => setCum(v === 'cum')}
+            options={[{ v: 'cum', ko: '누적' }, { v: 'day', ko: '일별' }]}
+          />
+          <Segmented
+            label="기간"
+            value={days}
+            onChange={setDays}
+            options={[{ v: 30, ko: '30일' }, { v: 60, ko: '60일' }, { v: 120, ko: '120일' }]}
+          />
         </div>
       </div>
 
@@ -304,7 +309,12 @@ function MarketChart({ status, catalog }: { status: Status | null; catalog: Cata
         <div className="flex flex-wrap items-center gap-1">
           <span className="mr-1 text-[12px] text-faint">비교군</span>
           {(catalog?.investors ?? []).map((iv) => (
-            <Chip key={iv.id} on={picked.includes(iv.id)} onClick={() => toggle(iv.id)}>
+            <Chip
+              key={iv.id}
+              on={picked.includes(iv.id)}
+              onClick={() => toggle(iv.id)}
+              dot={picked.includes(iv.id) ? (FLOW_COLOR[iv.id] ?? 'var(--fg-2)') : undefined}
+            >
               {iv.ko}
             </Chip>
           ))}
@@ -442,12 +452,68 @@ function Skeleton() {
 /* ══════════════════════ 공용 조각 ══════════════════════ */
 
 function Chip({
-  on, onClick, children, tone,
-}: { on?: boolean; onClick?: () => void; children: React.ReactNode; tone?: string }) {
+  on, onClick, children, tone, dot,
+}: { on?: boolean; onClick?: () => void; children: React.ReactNode; tone?: string; dot?: string }) {
   return (
-    <button type="button" onClick={onClick} className="chip" data-on={on ? 'true' : 'false'} data-tone={tone}>
+    <button
+      type="button"
+      onClick={onClick}
+      className="chip"
+      data-on={on ? 'true' : 'false'}
+      data-tone={tone}
+      aria-pressed={on ?? false}
+      style={dot ? ({ '--dot': dot } as React.CSSProperties) : undefined}
+    >
+      {dot && <span className="chip-dot" aria-hidden />}
       {children}
     </button>
+  );
+}
+
+/** 배타 선택. 칩을 흩어 놓으면 무엇과 무엇 중 하나인지 안 보인다. 한 트랙에 묶는다. */
+function Segmented<T extends string | number>({
+  value, options, onChange, label,
+}: { value: T; options: Array<{ v: T; ko: string }>; onChange: (v: T) => void; label: string }) {
+  return (
+    <div className="seg" role="group" aria-label={label}>
+      {options.map((o) => (
+        <button
+          key={String(o.v)}
+          type="button"
+          data-on={o.v === value ? 'true' : 'false'}
+          aria-pressed={o.v === value}
+          onClick={() => onChange(o.v)}
+        >
+          {o.ko}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** 조건 축 켜기·끄기. 글자 대신 실제로 미끄러지는 손잡이를 둔다. */
+function Switch({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label: string }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      title={label}
+      className="switch shrink-0"
+      data-on={on ? 'true' : 'false'}
+      onClick={() => onChange(!on)}
+    />
+  );
+}
+
+/** 높이 접기. 접힌 영역은 눈에서 사라져도 탭 이동에는 남으므로 inert 로 빼 준다. */
+function Collapse({ open, children }: { open: boolean; children: React.ReactNode }) {
+  const off = { inert: '' } as unknown as React.HTMLAttributes<HTMLDivElement>;
+  return (
+    <div className="fold" data-open={open ? 'true' : 'false'} {...(open ? {} : off)}>
+      <div>{children}</div>
+    </div>
   );
 }
 
@@ -606,12 +672,12 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
     <div className="space-y-4">
       <Card
         title="조건 검색"
-        sub="쓸 조건만 켜서 겹쳐 거릅니다. 셋 다 꺼면 거래대금 상위로 보여줘요"
+        sub="쓸 조건만 켜서 겹쳐 거릅니다. 셋 다 끄면 거래대금 상위로 보여줘요"
         right={
           <div className="flex shrink-0 flex-col items-end gap-1.5">
             <button
               onClick={() => void run()}
-              className="btn btn-beam"
+              className="btn btn-shine !px-6"
               disabled={loading}
               aria-busy={loading}
             >
@@ -631,30 +697,26 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
       >
         <div className="panel-body">
           <div className="rail">
-          <section className={`panel ${useFlow ? '' : 'axis-off'}`}>
+          <section className="tile" data-on={useFlow ? 'true' : 'false'}>
             <div className="panel-head">
               <div>
                 <h3 className="panel-title">수급</h3>
-                <p className="panel-desc">주체별 순매수 강도로 거릅니다</p>
+                <p className="panel-desc">
+                  {useFlow ? '주체별 순매수 강도로 거릅니다' : '검색에서 빼 둔 조건이에요'}
+                </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setUseFlow((v) => !v)}
-                className="chip shrink-0"
-                data-on={useFlow ? 'true' : 'false'}
-                aria-pressed={useFlow}
-              >
-                {useFlow ? '사용 중' : 'off'}
-              </button>
+              <Switch on={useFlow} onChange={setUseFlow} label="수급 조건 사용" />
             </div>
+            <Collapse open={useFlow}>
             <div className="panel-body">
 {/* 수급 조건 */}
-          <div className="space-y-1.5">
+          <div>
+            <div className="divide-y divide-line">
             {rule.flow.map((f, i) => (
-              <div key={i} className="flex flex-wrap items-center gap-1.5 glass-inset px-2.5 py-2">
-                <span className={`tag ${i === 0 ? 'tag-violet' : 'tag-mute'} font-semibold`}>
-                  {i === 0 ? '수급' : 'AND'}
-                </span>
+              <div key={i} className="flex flex-wrap items-center gap-1.5 py-2 first:pt-0 last:pb-0">
+                {i > 0 && (
+                  <span className="tag tag-accent">{(rule.flowLogic ?? 'AND') === 'OR' ? '또는' : '그리고'}</span>
+                )}
                 <select value={f.investorType} onChange={(e) => setFlow(i, { investorType: e.target.value })} className="input">
                   {investorGroups.map(([g, list]) => (
                     <optgroup key={g} label={g}>
@@ -689,58 +751,46 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
                   <option value="sum">기간 합계</option>
                 </select>
                 {rule.flow.length > 1 && (
-                  <button onClick={() => delFlow(i)} className="btn btn-ghost ml-auto !px-1.5" aria-label={`${i + 1}번 조건 삭제`}>
+                  <button onClick={() => delFlow(i)} className="btn btn-quiet ml-auto !px-1.5" aria-label={`${i + 1}번 조건 삭제`}>
                     {Icon.x}
                   </button>
                 )}
               </div>
             ))}
-            <div className="flex flex-wrap items-center gap-2">
-              <button onClick={addFlow} className="btn btn-ghost !px-2.5 !py-1.5 !text-[12.5px] !font-medium">
+            </div>
+            <div className="mt-2.5 flex flex-wrap items-center gap-2">
+              <button onClick={addFlow} className="btn btn-ghost !px-3 !py-1.5 !text-[12.5px]">
                 {Icon.plus} 조건 추가
               </button>
               {rule.flow.length > 1 && (
-                <span className="flex items-center gap-1">
-                  <span className="mr-0.5 text-[12px] text-faint">조건 묶기</span>
-                  {(['AND', 'OR'] as const).map((lg) => (
-                    <Chip
-                      key={lg}
-                      on={(rule.flowLogic ?? 'AND') === lg}
-                      onClick={() => setRule((r) => ({ ...r, flowLogic: lg }))}
-                    >
-                      {lg === 'AND' ? '모두 만족' : '하나라도'}
-                    </Chip>
-                  ))}
-                </span>
+                <Segmented
+                  label="조건 묶는 방식"
+                  value={rule.flowLogic ?? 'AND'}
+                  onChange={(lg) => setRule((r) => ({ ...r, flowLogic: lg }))}
+                  options={[{ v: 'AND', ko: '모두 만족' }, { v: 'OR', ko: '하나라도' }]}
+                />
               )}
             </div>
           </div>
             </div>
+            </Collapse>
           </section>
-          <section className={`panel ${usePattern ? '' : 'axis-off'}`}>
+          <section className="tile" data-on={usePattern ? 'true' : 'false'}>
             <div className="panel-head">
               <div>
                 <h3 className="panel-title">패턴</h3>
-                <p className="panel-desc">지금 어느 단계에 있는지로 거릅니다</p>
+                <p className="panel-desc">
+                  {usePattern ? '지금 어느 단계에 있는지로 거릅니다' : '검색에서 빼 둔 조건이에요'}
+                </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setUsePattern((v) => !v)}
-                className="chip shrink-0"
-                data-on={usePattern ? 'true' : 'false'}
-                aria-pressed={usePattern}
-              >
-                {usePattern ? '사용 중' : 'off'}
-              </button>
+              <Switch on={usePattern} onChange={setUsePattern} label="패턴 조건 사용" />
             </div>
+            <Collapse open={usePattern}>
             <div className="panel-body">
 {/* 패턴 조건 */}
-          <div className="glass-inset px-2.5 py-2">
-            <div className="mb-1.5 flex items-center gap-2">
-              <span className="tag tag-violet font-semibold">패턴</span>
-              <span className="text-[12px] text-faint">비워 두면 수급 조건만으로 찾아요</span>
-            </div>
-            <div className="mb-1.5 flex flex-wrap gap-1">
+          <div>
+            <p className="mb-2 text-[12px] text-faint">고르지 않으면 모든 패턴을 봅니다</p>
+            <div className="mb-2 flex flex-wrap gap-1">
               {catalog.patterns.map((p) => (
                 <Chip
                   key={p.id}
@@ -796,27 +846,22 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
             </div>
           </div>
             </div>
+            </Collapse>
           </section>
-          <section className={`panel ${useLine ? '' : 'axis-off'}`}>
+          <section className="tile" data-on={useLine ? 'true' : 'false'}>
             <div className="panel-head">
               <div>
-                <h3 className="panel-title">라인 · 공통</h3>
-                <p className="panel-desc">지지선 시그널과 시장·정렬을 정합니다</p>
+                <h3 className="panel-title">라인</h3>
+                <p className="panel-desc">
+                  {useLine ? '지지선·눌림목 시그널로 거릅니다' : '검색에서 빼 둔 조건이에요'}
+                </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setUseLine((v) => !v)}
-                className="chip shrink-0"
-                data-on={useLine ? 'true' : 'false'}
-                aria-pressed={useLine}
-              >
-                {useLine ? '사용 중' : 'off'}
-              </button>
+              <Switch on={useLine} onChange={setUseLine} label="라인 조건 사용" />
             </div>
+            <Collapse open={useLine}>
             <div className="panel-body">
-{/* 라인 + 공통 */}
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 glass-inset px-2.5 py-2">
-            <span className="tag tag-violet font-semibold">라인</span>
+{/* 라인 조건 */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
             {catalog.lineSignals.map((s) => (
               <Chip
                 key={s.id}
@@ -826,29 +871,42 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
                 {s.ko}
               </Chip>
             ))}
-            <span className="ml-3 text-[12px] text-faint">시장</span>
-            <select value={rule.market} onChange={(e) => setRule((r) => ({ ...r, market: e.target.value }))} className="input">
-              <option value="ALL">전체</option>
-              <option value="KOSPI">KOSPI</option>
-              <option value="KOSDAQ">KOSDAQ</option>
-            </select>
-            <span className="text-[12px] text-faint">최소 거래대금</span>
-            <select value={rule.minTradedValue} onChange={(e) => setRule((r) => ({ ...r, minTradedValue: Number(e.target.value) }))} className="input">
-              <option value={0}>제한 없음</option>
-              <option value={100_000_000}>1억</option>
-              <option value={1_000_000_000}>10억</option>
-              <option value={5_000_000_000}>50억</option>
-              <option value={10_000_000_000}>100억</option>
-            </select>
-            <span className="text-[12px] text-faint">정렬</span>
-            <select value={rule.sortBy} onChange={(e) => setRule((r) => ({ ...r, sortBy: e.target.value as RuleBody['sortBy'] }))} className="input">
-              <option value="flow">수급 강도</option>
-              <option value="score">패턴 점수</option>
-              <option value="traded_value">거래대금</option>
-            </select>
           </div>
             </div>
+            </Collapse>
           </section>
+          </div>
+
+          {/* 시장·거래대금·정렬은 어느 축을 켜든 항상 걸리는 공통 설정이다.
+              라인 카드 안에 두면 라인을 끌 때 같이 접혀 손댈 수 없게 된다. */}
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line pt-3">
+            <span className="text-[12px] font-medium text-mute">공통</span>
+            <label className="flex items-center gap-1.5 text-[12px] text-faint">
+              시장
+              <select value={rule.market} onChange={(e) => setRule((r) => ({ ...r, market: e.target.value }))} className="input !py-1 !text-[12px]">
+                <option value="ALL">전체</option>
+                <option value="KOSPI">KOSPI</option>
+                <option value="KOSDAQ">KOSDAQ</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-1.5 text-[12px] text-faint">
+              최소 거래대금
+              <select value={rule.minTradedValue} onChange={(e) => setRule((r) => ({ ...r, minTradedValue: Number(e.target.value) }))} className="input !py-1 !text-[12px]">
+                <option value={0}>제한 없음</option>
+                <option value={100_000_000}>1억</option>
+                <option value={1_000_000_000}>10억</option>
+                <option value={5_000_000_000}>50억</option>
+                <option value={10_000_000_000}>100억</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-1.5 text-[12px] text-faint">
+              정렬
+              <select value={rule.sortBy} onChange={(e) => setRule((r) => ({ ...r, sortBy: e.target.value as RuleBody['sortBy'] }))} className="input !py-1 !text-[12px]">
+                <option value="flow">수급 강도</option>
+                <option value="score">패턴 점수</option>
+                <option value="traded_value">거래대금</option>
+              </select>
+            </label>
           </div>
         </div>
       </Card>
