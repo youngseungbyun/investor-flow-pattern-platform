@@ -53,6 +53,8 @@ export async function GET(req: Request, ctx: Ctx) {
         return json(await stockPayload(route[1], q));
       case 'catalog':
         return json(catalogPayload());
+      case 'find':
+        return json({ items: await findInstruments(q.get('q') ?? '') });
       case 'lines':
         return json(await linesPayload(q));
       case 'series':
@@ -438,6 +440,28 @@ async function patternsPayload(q: URLSearchParams) {
 }
 
 /* ───────────────────────────── stock ───────────────────────────── */
+
+/**
+ * 종목 찾기. 이름 앞부분 · 이름 포함 · 종목코드 세 가지를 한 번에 받는다.
+ * 정렬은 최근 거래대금 순이다. "삼성"으로 20개가 나올 때 삼성전자가 위에 있어야 한다.
+ */
+async function findInstruments(raw: string) {
+  const term = raw.trim();
+  if (term.length === 0) return [];
+  const like = `%${term}%`;
+  return query<{ symbol: string; name: string; market: string; traded_value: string | null }>(
+    `select i.symbol, i.name, i.market, o.traded_value
+       from instruments i
+       left join lateral (
+         select traded_value from ohlcv_daily o2
+          where o2.symbol = i.symbol order by o2.date desc limit 1
+       ) o on true
+      where i.name ilike $1 or i.symbol like $1
+      order by (i.name ilike $2) desc, coalesce(o.traded_value, 0) desc
+      limit 12`,
+    [like, `${term}%`],
+  );
+}
 
 async function stockPayload(symbol: string, q: URLSearchParams) {
   const date = q.get('date') ?? todayKst();

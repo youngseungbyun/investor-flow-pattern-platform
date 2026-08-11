@@ -15,7 +15,8 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import PriceChart, { type ChartBar, type PatternInfo } from '@/components/PriceChart';
+import PriceChart, { PATTERN_KO, type ChartBar, type PatternInfo } from '@/components/PriceChart';
+import SymbolSearch from '@/components/SymbolSearch';
 
 interface FlowRow {
   date: string;
@@ -216,22 +217,27 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
 
   return (
     <Shell>
-      <div className="mb-4 flex flex-wrap items-baseline gap-3">
-        <Link href="/" className="text-sm text-mute hover:underline">
+      {/* 종목명·시세를 스크롤 내내 붙여 둔다. 아래로 다섯 개 패널이 이어지는데
+          지금 어느 종목을 보고 있는지가 화면에서 사라지면 안 된다. */}
+      <header className="sticky top-0 z-30 -mx-5 mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-bg/95 px-5 py-2.5 backdrop-blur-sm">
+        <Link href="/" className="btn btn-quiet !px-2 !py-1 !text-[12.5px]">
           ← 스크리너
         </Link>
-        <h1 className="text-xl font-bold">{inst.name}</h1>
-        <span className="text-sm text-faint">{inst.symbol}</span>
+        <h1 className="text-[17px] font-semibold tracking-[-0.012em]">{inst.name}</h1>
+        <span className="num text-[12.5px] text-faint">{inst.symbol}</span>
         <span className="tag tag-mute">{inst.market}</span>
         {last && (
-          <span className="ml-2 text-lg font-semibold tabular-nums">
-            {num(last.c)}
-            <span className={`ml-2 text-sm ${(change ?? 0) >= 0 ? 'up' : 'down'}`}>
+          <span className="ml-1 flex items-baseline gap-2">
+            <span className="num text-[19px] font-medium tracking-[-0.02em]">{num(last.c)}</span>
+            <span className={`num text-[13px] font-semibold ${(change ?? 0) >= 0 ? 'up' : 'down'}`}>
               {change === null ? '' : `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`}
             </span>
           </span>
         )}
-      </div>
+        <div className="ml-auto">
+          <SymbolSearch />
+        </div>
+      </header>
 
       <section className="panel mb-4 grid grid-cols-2 divide-x divide-line md:grid-cols-4">
         <Stat label="상장주식수" value={num(inst.listed_shares)} />
@@ -248,7 +254,7 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
         />
       </section>
       {inst.free_float_basis === 'listed_shares' && (
-        <p className="mb-4 border-l-2 border-accent bg-[var(--accent-soft)] px-3 py-2 text-xs text-warn">
+        <p className="mb-4 rounded-[var(--r-field)] bg-[var(--gold-soft)] px-3.5 py-2.5 text-[12.5px] leading-relaxed text-warn">
           최대주주 소유분과 자기주식을 아직 확보하지 못해 <b>상장주식수를 유통주식수 대신</b> 쓰고 있어요.
           이 종목의 비율 지표는 실제보다 작게 나와요.
         </p>
@@ -268,8 +274,8 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
       <ProgramPanel data={data} />
 
       <section className="card mb-4">
-        <div className="flex flex-wrap items-center panel-head flex-wrap items-center gap-3">
-          <h2 className="text-sm font-semibold">투자자별 수급</h2>
+        <div className="panel-head flex-wrap items-center gap-3">
+          <h2 className="panel-title">투자자별 수급</h2>
           <div className="flex gap-1">
             {[1, 5, 20, 60].map((d) => (
               <button
@@ -481,19 +487,18 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
       </div>
 
       {data.patterns.length > 0 && (
-        <section className="mt-4 card p-4">
-          <h2 className="mb-2 text-sm font-semibold">패턴 탐지 근거</h2>
-          {data.patterns.map((p) => (
-            <details key={p.pattern} className="mb-2">
-              <summary className="cursor-pointer text-sm">
-                {p.pattern === 'inverse_head_shoulders' ? '역헤드앤숄더' : '컵앤핸들'} · 점수{' '}
-                {Number(p.score).toFixed(1)} · {p.confirmed ? '돌파 확정' : '미확정'}
-              </summary>
-              <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-all rounded bg-surface-2 p-3 text-[11px] text-mute">
-                {JSON.stringify(p.evidence, null, 2)}
-              </pre>
-            </details>
-          ))}
+        <section className="card mt-4">
+          <div className="panel-head">
+            <div>
+              <h2 className="panel-title">패턴 판정 근거</h2>
+              <p className="panel-desc">점수가 어떻게 나왔는지 항목별로 보여줘요</p>
+            </div>
+          </div>
+          <div className="panel-body space-y-2">
+            {data.patterns.map((p) => (
+              <PatternEvidence key={`${p.pattern}-${p.date ?? ''}`} p={p} />
+            ))}
+          </div>
         </section>
       )}
     </Shell>
@@ -631,10 +636,77 @@ function ProgramPanel({ data }: { data: Payload }) {
   );
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
+/**
+ * 패턴 근거 한 건.
+ *
+ * 예전에는 evidence JSON 을 통째로 <pre> 에 부어 놨다. 개발용 출력이지 제품 화면이 아니고,
+ * 이름표도 두 패턴만 맞고 나머지 14종은 전부 "컵앤핸들"로 잘못 찍혔다.
+ * 판정에 실제로 쓰인 값만 한국어 이름으로 세워 보여 주고, 원본은 접어 둔다.
+ */
+const EV_KO: Array<[key: string, ko: string, fmt: (v: number) => string]> = [
+  ['breakoutVolumeRatio', '돌파봉 거래량', (v) => `평소의 ${v.toFixed(2)}배`],
+  ['formationVolumeRatio', '형성 중 거래량', (v) => `전반부의 ${v.toFixed(2)}배`],
+  ['distancePct', '돌파선까지', (v) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`],
+  ['pivotPrice', '돌파선', (v) => nfmt(v)],
+  ['barsSinceBreakout', '돌파 후', (v) => `${v}거래일`],
+  ['barsSinceFormed', '완성 후', (v) => `${v}거래일`],
+  ['freshness', '최신성 계수', (v) => v.toFixed(2)],
+];
+const nfmt = (v: number) => new Intl.NumberFormat('ko-KR').format(Math.round(v));
+
+function PatternEvidence({ p }: { p: PatternInfo }) {
+  const ev = p.evidence ?? {};
+  const rows = EV_KO.map(([key, ko, fmt]) => {
+    const raw = ev[key];
+    const v = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : NaN;
+    return Number.isFinite(v) ? { ko, text: fmt(v), key } : null;
+  }).filter((r) => r !== null);
+
+  const stage = typeof ev.stage === 'string' ? ev.stage : p.stage;
+  const heavy = Number(ev.breakoutVolumeRatio ?? 0) >= 1.5;
+
   return (
-    <main className="min-h-screen bg-surface-2 text-fg">
-      <div className="mx-auto max-w-[1500px] px-6 py-6">{children}</div>
+    <div className="sunken px-3 py-2.5">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className="text-[13px] font-semibold">{PATTERN_KO[p.pattern] ?? p.pattern}</span>
+        {stage && <span className="tag tag-mute">{STAGE_KO[stage] ?? stage}</span>}
+        {heavy && <span className="tag tag-up">거래량 실림</span>}
+        <span className="num ml-auto text-[13px] font-semibold">{Number(p.score).toFixed(0)}점</span>
+      </div>
+      {rows.length > 0 && (
+        <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3">
+          {rows.map((r) => (
+            <div key={r.key} className="flex items-baseline justify-between gap-2">
+              <dt className="text-[11.5px] text-faint">{r.ko}</dt>
+              <dd className="num text-[12px] text-fg">{r.text}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      <details className="mt-2">
+        <summary className="cursor-pointer text-[11.5px] text-faint">원본 값</summary>
+        <pre className="mt-1.5 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-[var(--r-field)] bg-bg p-2.5 text-[11px] text-mute">
+          {JSON.stringify(p.evidence, null, 2)}
+        </pre>
+      </details>
+    </div>
+  );
+}
+
+const STAGE_KO: Record<string, string> = {
+  forming: '형성중',
+  near_pivot: '돌파선 부근',
+  breakout: '돌파',
+  pullback: '눌림목',
+  failed: '돌파 실패',
+};
+
+function Shell({ children }: { children: React.ReactNode }) {
+  // 지면은 s0 다. 예전에는 s2 라 카드(s1)가 지면보다 어두워, 테두리를 걷어낸 뒤로는
+  // 카드가 배경에 파묻혀 경계가 뒤집혀 보였다.
+  return (
+    <main className="min-h-screen bg-bg text-fg">
+      <div className="mx-auto max-w-[1500px] px-5 pb-10">{children}</div>
     </main>
   );
 }

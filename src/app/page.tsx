@@ -5,6 +5,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { MagnifyingGlass, Moon, Plus, Sun, X } from '@phosphor-icons/react/dist/ssr';
 import { Area, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import NumberTicker from '@/components/NumberTicker';
+import SymbolSearch from '@/components/SymbolSearch';
 
 /* ══════════════════════════ 타입 ══════════════════════════ */
 
@@ -169,11 +170,13 @@ export default function Dashboard() {
         <div className="mx-auto flex max-w-[1720px] flex-wrap items-center gap-x-5 gap-y-1 px-5 pt-2.5">
           <h1 className="text-[15px] font-semibold tracking-[-0.012em]">수급·패턴 분석</h1>
 
-          <span className="hidden pb-2 text-[12.5px] text-faint sm:inline">
+          <span className="hidden pb-2 text-[12.5px] text-faint lg:inline">
             수급, 패턴, 라인을 한 화면에서 조합해 찾습니다
           </span>
 
           <div className="ml-auto flex items-center gap-2 pb-1.5">
+            {/* 조건으로 찾는 화면이지만 이미 아는 종목으로 바로 갈 길도 있어야 한다. */}
+            <SymbolSearch />
             <label className="flex items-center gap-1.5 text-[12px] text-mute">
               기준일
               {fromDate !== '' && (

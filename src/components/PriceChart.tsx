@@ -54,6 +54,7 @@ type Mode = 'none' | 'hline' | 'trend';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const n = (v: string | number) => (typeof v === 'number' ? v : Number(v));
+const nf = new Intl.NumberFormat('ko-KR');
 
 /** 봉 주기. 서버는 일봉만 주고 주·월봉은 여기서 묶는다. */
 type TF = 'D' | 'W' | 'M';
@@ -213,7 +214,7 @@ function patternGeometry(p: PatternInfo | null): PatternGeometry {
   return { points, lines, pivotPrice, stage };
 }
 
-const PATTERN_KO: Record<string, string> = {
+export const PATTERN_KO: Record<string, string> = {
   inverse_head_shoulders: '역헤드앤숄더',
   double_bottom: '쌍바닥',
   triple_bottom: '삼중바닥',
@@ -245,6 +246,17 @@ export interface FlowMarker {
   investor_type: string;
   net_buy_qty: string | number;
   float_ratio_pct: string | number | null;
+}
+
+/** 마커 위에 올렸을 때 펼쳐 보여 줄 내역. */
+interface MarkerDetail {
+  kind: 'flow' | 'pattern';
+  time: string;
+  /** 수급이면 고른 주체의 합계 %, 패턴이면 없음 */
+  sum?: number;
+  rows: Array<{ label: string; pct: number; qty: number }>;
+  /** 패턴 골격 점의 이름 */
+  note?: string;
 }
 
 export interface ChartSupportLine {
@@ -287,6 +299,10 @@ export default function PriceChart({
   /** 차트 인스턴스가 만들어졌는지. 이 값이 true 가 된 뒤에만 시리즈를 건드릴 수 있다. */
   const [ready, setReady] = useState(false);
 
+  /** 마커 하나가 담고 있는 내역. 화살표에 커서를 올리면 이걸 펼쳐 보여 준다. */
+  const detailRef = useRef<Map<string, MarkerDetail>>(new Map());
+  const [hover, setHover] = useState<{ d: MarkerDetail; x: number; y: number } | null>(null);
+
   const [tf, setTf] = useState<TF>('D');
   /** 마커로 그릴 최소 순매수 비율(유통주식수 대비 %). 0 이면 전부 그린다. */
   const [flowMin, setFlowMin] = useState(0.1);
@@ -317,13 +333,23 @@ export default function PriceChart({
 
     // 패턴 골격 + 수급 유입 마커를 한 번에 얹는다.
     // 수급 마커는 "언제 얼마나 들어왔는지"를 봉 위에 바로 보여주기 위한 것이다.
+    const detail = new Map<string, MarkerDetail>();
+
     // 패턴 골격은 위, 수급은 아래. 층을 나눠야 둘이 겹쳐 봉을 가리지 않는다.
     const patternMarkers: SeriesMarker<Time>[] = geometry.points
-      .map((p) => {
+      .map((p, i) => {
         const time = view.at.get(p.t);
-        return time
-          ? ({ time: time as Time, position: 'aboveBar', color: t.mark, shape: 'circle', text: p.label } as SeriesMarker<Time>)
-          : null;
+        if (!time) return null;
+        const id = `pt-${i}-${time}`;
+        detail.set(id, { kind: 'pattern', time: p.t, rows: [], note: p.label });
+        return {
+          id,
+          time: time as Time,
+          position: 'aboveBar',
+          color: t.mark,
+          shape: 'circle',
+          text: p.label,
+        } as SeriesMarker<Time>;
       })
       .filter((m): m is SeriesMarker<Time> => m !== null);
 
@@ -331,16 +357,24 @@ export default function PriceChart({
     // 고른 주체의 순매수 비율을 봉 단위로 합쳐 화살표 하나로 만들고 크기로 세기를 표현한다.
     // 임계값에 못 미치는 날은 아예 그리지 않는다. 주봉·월봉에서는 그 구간 합계가 된다.
     const pickSet = new Set(picked);
-    const perBar = new Map<string, { sum: number; topId: string; topPct: number }>();
+    const perBar = new Map<
+      string,
+      { sum: number; topId: string; topPct: number; rows: Map<string, { pct: number; qty: number }> }
+    >();
     if (showFlow) {
       for (const f of flowMarkers) {
         if (!pickSet.has(f.investor_type)) continue;
         const time = view.at.get(f.date);
         const pct = Number(f.float_ratio_pct ?? 0);
         if (!time || !Number.isFinite(pct) || pct === 0) continue;
-        const cur = perBar.get(time) ?? { sum: 0, topId: f.investor_type, topPct: 0 };
+        const cur = perBar.get(time) ?? { sum: 0, topId: f.investor_type, topPct: 0, rows: new Map() };
         cur.sum += pct;
         if (Math.abs(pct) > Math.abs(cur.topPct)) { cur.topId = f.investor_type; cur.topPct = pct; }
+        // 주봉·월봉에서는 한 봉에 같은 주체가 여러 번 들어온다. 합쳐서 한 줄로 만든다.
+        const prev = cur.rows.get(f.investor_type) ?? { pct: 0, qty: 0 };
+        prev.pct += pct;
+        prev.qty += Number(f.net_buy_qty ?? 0);
+        cur.rows.set(f.investor_type, prev);
         perBar.set(time, cur);
       }
     }
@@ -370,7 +404,17 @@ export default function PriceChart({
       const share = Math.abs(v.sum) / biggest;
       // 주체를 하나만 골랐으면 이름이 매번 같아 군더더기다. 숫자만 남긴다.
       const name = picked.length === 1 ? '' : `${investorLabels[v.topId] ?? v.topId} `;
+      const id = `fl-${time}`;
+      detail.set(id, {
+        kind: 'flow',
+        time,
+        sum: v.sum,
+        rows: [...v.rows.entries()]
+          .map(([iv, r]) => ({ label: investorLabels[iv] ?? iv, pct: r.pct, qty: r.qty }))
+          .sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct)),
+      });
       return {
+        id,
         time: time as Time,
         position: 'belowBar',
         color: buy ? t.up : t.down,
@@ -379,6 +423,7 @@ export default function PriceChart({
         text: labelled.has(time) ? `${name}${buy ? '+' : ''}${v.sum.toFixed(2)}%` : '',
       };
     });
+    detailRef.current = detail;
 
     const markers = [...patternMarkers, ...flowMarks].sort((a, b) =>
       String(a.time).localeCompare(String(b.time)),
@@ -482,6 +527,18 @@ export default function PriceChart({
     chartRef.current = chart;
     candleRef.current = candles;
     volumeRef.current = volume;
+
+    // 마커 위에 커서가 오면 그 마커의 내역을 띄운다. 라벨은 자리가 없어 6개까지만
+    // 붙는데, 나머지 화살표도 무엇이 들어왔는지 알 수 있어야 한다.
+    chart.subscribeCrosshairMove((param) => {
+      const id = param.hoveredObjectId;
+      const d = typeof id === 'string' ? detailRef.current.get(id) : undefined;
+      if (!d || !param.point) {
+        setHover(null);
+        return;
+      }
+      setHover({ d, x: param.point.x, y: param.point.y });
+    });
 
     const redraw = () => setOverlayTick((x) => x + 1);
     chart.timeScale().subscribeVisibleLogicalRangeChange(redraw);
@@ -834,6 +891,56 @@ export default function PriceChart({
           className="chart-host h-[min(68vh,620px)] w-full"
           style={{ cursor: mode === 'none' ? 'crosshair' : 'copy' }}
         />
+        {hover && (
+          <div
+            className="pointer-events-none absolute z-20 w-[214px] overflow-hidden rounded-[var(--r-field)] bg-surface shadow-[0_10px_28px_rgb(0_0_0/0.38)]"
+            style={{
+              // 커서 오른쪽이 기본, 오른쪽 끝에 닿으면 왼쪽으로 뒤집는다.
+              left: hover.x > 260 ? undefined : hover.x + 14,
+              right: hover.x > 260 ? `calc(100% - ${hover.x - 14}px)` : undefined,
+              top: Math.max(8, hover.y - 12),
+            }}
+            role="tooltip"
+          >
+            {hover.d.kind === 'pattern' ? (
+              <div className="px-3 py-2.5">
+                <p className="text-[12.5px] font-semibold text-fg">{hover.d.note}</p>
+                <p className="num mt-0.5 text-[11.5px] text-faint">{hover.d.time}</p>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-baseline justify-between gap-2 bg-surface-2 px-3 py-2">
+                  <span className="num text-[11.5px] text-faint">{hover.d.time}</span>
+                  <span
+                    className={`num text-[13px] font-semibold ${(hover.d.sum ?? 0) >= 0 ? 'up' : 'down'}`}
+                  >
+                    {(hover.d.sum ?? 0) >= 0 ? '+' : ''}
+                    {(hover.d.sum ?? 0).toFixed(3)}%
+                  </span>
+                </div>
+                <ul className="px-3 py-2">
+                  {hover.d.rows.slice(0, 6).map((r) => (
+                    <li key={r.label} className="flex items-baseline gap-2 py-[3px] text-[12px]">
+                      <span className="truncate text-mute">{r.label}</span>
+                      <span className={`num ml-auto shrink-0 font-semibold ${r.pct >= 0 ? 'up' : 'down'}`}>
+                        {r.pct >= 0 ? '+' : ''}
+                        {r.pct.toFixed(3)}%
+                      </span>
+                      <span className="num w-[68px] shrink-0 text-right text-faint">
+                        {nf.format(Math.round(r.qty))}주
+                      </span>
+                    </li>
+                  ))}
+                  {hover.d.rows.length > 6 && (
+                    <li className="pt-1 text-[11.5px] text-faint">외 {hover.d.rows.length - 6}개 주체</li>
+                  )}
+                </ul>
+                <p className="bg-surface-2 px-3 py-1.5 text-[11px] text-faint">유통주식수 대비 비율</p>
+              </>
+            )}
+          </div>
+        )}
+
         <svg className="pointer-events-none absolute inset-0 h-full w-full">
           {overlay.trends.map((t) => (
             <line key={t.id} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} stroke="var(--fg)" strokeWidth={2} />
