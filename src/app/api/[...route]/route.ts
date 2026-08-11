@@ -505,8 +505,10 @@ async function stockPayload(symbol: string, q: URLSearchParams) {
   // 차트 봉에 얹을 수급 마커.
   // 고정 임계값만 쓰면 대형주는 유통주식수가 커서 아무것도 안 잡힌다(삼성전자 0.3% = 1,750만주).
   // 그래서 임계값을 넘긴 날이 없으면 "유입/유출이 가장 컸던 상위 N일"을 대신 보여준다.
+  // 차트에서 주체·임계값을 직접 고르므로 넉넉히 내려보내고 거르는 건 화면이 한다.
+  // 서버가 미리 30건으로 줄여 두면 "사모만 보기" 를 눌렀을 때 표본이 몇 개 안 남는다.
   const markerMinPct = Number(q.get('markerMinPct') ?? 0.3);
-  const markerLimit = Math.min(80, Number(q.get('markerLimit') ?? 30));
+  const markerLimit = Math.min(600, Number(q.get('markerLimit') ?? 30));
   const markerSql = (minPct: number) =>
     query(
       `select to_char(e.date,'YYYY-MM-DD') date, e.investor_type, e.net_buy_qty, e.net_buy_amount,

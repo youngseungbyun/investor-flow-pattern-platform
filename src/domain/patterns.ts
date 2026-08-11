@@ -281,7 +281,22 @@ function finish(
   const meta = PATTERN_BY_ID.get(patternId);
   const direction = meta?.direction ?? 'neutral';
   const st = computeStage(bars, pivotAt, direction, fromIdx);
-  const volBonus = clamp01(st.volumeRatio / 1.5) * 12;
+
+  // 돌파는 거래량이 실려야 인정한다. 기준선은 직전 20봉 평균의 1.5배(평소 대비 +50%)다.
+  //   1.5배 이상  기본 14점 + 3배까지 8점 더
+  //   1.0~1.5배   0 → 14점 선형
+  //   1.0배 미만  감점. 평소보다 한산한 돌파는 되레 실패 확률이 높다
+  // 예전 식(ratio/1.5 * 12)은 1.5배에서 상한이라 3배 돌파와 1.5배 돌파가 같은 점수였고,
+  // 0.8배짜리 힘없는 돌파에도 만점의 절반을 줬다.
+  const r = st.volumeRatio;
+  const volBonus =
+    st.breakoutIdx < 0
+      ? 0
+      : r >= 1.5
+        ? 14 + clamp01((r - 1.5) / 1.5) * 8
+        : r >= 1
+          ? clamp01((r - 1) / 0.5) * 14
+          : -8 * clamp01((1 - r) / 0.5);
 
   // 형성 중 거래량이 말랐는가. 후반부가 전반부의 70% 이하면 만점.
   const dry = volumeDryUp(bars, startIdx, endIdx);

@@ -191,6 +191,8 @@ export interface RuleRow {
     endDate: string | null;
     barsSinceBreakout: number | null;
     barsSinceFormed: number | null;
+    /** 돌파봉 거래량 ÷ 직전 20봉 평균. 돌파 전이면 null. */
+    breakoutVolumeRatio: number | null;
   }>;
   lines: Array<{ signal: string; score: number; detail: Record<string, unknown> }>;
   insiderBuys: number;
@@ -236,9 +238,11 @@ export async function runRule(rule: Rule): Promise<RuleResult> {
     pivot_price: string | null; distance_pct: string | null;
     breakout_date: string | null; start_date: string | null; end_date: string | null;
     bars_since_breakout: number | null; bars_since_formed: number | null;
+    breakout_volume_ratio: string | null;
   }>(
     `select symbol, pattern, direction, stage, score, pivot_price, distance_pct,
             bars_since_breakout, bars_since_formed,
+            evidence_json->>'breakoutVolumeRatio' breakout_volume_ratio,
             to_char(breakout_date,'YYYY-MM-DD') breakout_date,
             to_char(start_date,'YYYY-MM-DD') start_date,
             to_char(end_date,'YYYY-MM-DD') end_date
@@ -485,6 +489,10 @@ export async function runRule(rule: Rule): Promise<RuleResult> {
       breakoutDate: p.breakout_date,
       barsSinceBreakout: p.bars_since_breakout,
       barsSinceFormed: p.bars_since_formed,
+      breakoutVolumeRatio:
+        p.breakout_volume_ratio === null || Number(p.breakout_volume_ratio) <= 0
+          ? null
+          : Number(p.breakout_volume_ratio),
       startDate: p.start_date,
       endDate: p.end_date,
     })),

@@ -55,6 +55,57 @@ type Mode = 'none' | 'hline' | 'trend';
 const uid = () => Math.random().toString(36).slice(2, 10);
 const n = (v: string | number) => (typeof v === 'number' ? v : Number(v));
 
+/** 봉 주기. 서버는 일봉만 주고 주·월봉은 여기서 묶는다. */
+type TF = 'D' | 'W' | 'M';
+const TF_KO: Record<TF, string> = { D: '일봉', W: '주봉', M: '월봉' };
+
+/**
+ * 일봉을 주봉·월봉으로 묶는다.
+ * 시가는 첫 봉, 고가·저가는 구간 극값, 종가는 마지막 봉, 거래량은 합이다.
+ *
+ * 묶은 봉의 시각은 그 구간의 **첫 거래일**로 둔다. 패턴 좌표와 수급 마커는
+ * 원래 일자를 갖고 있어서 그대로 얹으면 시리즈에 없는 시각이라 통째로 사라진다.
+ * 그래서 "일자 → 그 일자가 속한 봉의 시각" 대응표를 같이 돌려준다.
+ */
+function aggregate(bars: ChartBar[], tf: TF): { bars: ChartBar[]; at: Map<string, string> } {
+  const at = new Map<string, string>();
+  if (tf === 'D') {
+    for (const b of bars) at.set(b.date, b.date);
+    return { bars, at };
+  }
+  const keyOf = (d: string) => {
+    if (tf === 'M') return d.slice(0, 7);
+    // 그 주의 월요일로 묶는다. UTC 로 계산해야 서머타임·표준시 경계가 없다.
+    const dt = new Date(`${d}T00:00:00Z`);
+    dt.setUTCDate(dt.getUTCDate() - ((dt.getUTCDay() + 6) % 7));
+    return dt.toISOString().slice(0, 10);
+  };
+
+  const out: ChartBar[] = [];
+  let curKey = '';
+  for (const b of bars) {
+    const k = keyOf(b.date);
+    if (k !== curKey) {
+      curKey = k;
+      out.push({
+        date: b.date,
+        o: n(b.o), h: n(b.h), l: n(b.l), c: n(b.c),
+        volume: n(b.volume),
+        traded_value: n(b.traded_value ?? 0),
+      });
+    } else {
+      const cur = out[out.length - 1];
+      cur.h = Math.max(n(cur.h), n(b.h));
+      cur.l = Math.min(n(cur.l), n(b.l));
+      cur.c = n(b.c);
+      cur.volume = n(cur.volume) + n(b.volume);
+      cur.traded_value = n(cur.traded_value ?? 0) + n(b.traded_value ?? 0);
+    }
+    at.set(b.date, out[out.length - 1].date);
+  }
+  return { bars: out, at };
+}
+
 /** CSS 토큰을 읽어 차트 색을 만든다. 테마를 바꾸면 그대로 따라온다. */
 function readTheme() {
   const s = getComputedStyle(document.documentElement);
@@ -236,8 +287,26 @@ export default function PriceChart({
   /** 차트 인스턴스가 만들어졌는지. 이 값이 true 가 된 뒤에만 시리즈를 건드릴 수 있다. */
   const [ready, setReady] = useState(false);
 
+  const [tf, setTf] = useState<TF>('D');
+  /** 마커로 그릴 최소 순매수 비율(유통주식수 대비 %). 0 이면 전부 그린다. */
+  const [flowMin, setFlowMin] = useState(0.1);
+  /** 볼 주체. null 이면 전체. */
+  const [flowPick, setFlowPick] = useState<string[] | null>(null);
+
   const activePattern = patterns[showPattern] ?? null;
   const geometry = useMemo(() => patternGeometry(activePattern), [activePattern]);
+  const view = useMemo(() => aggregate(bars, tf), [bars, tf]);
+
+  /** 마커 데이터에 실제로 등장하는 주체만, 유입이 큰 순서로. 없는 주체를 내밀 이유가 없다. */
+  const flowTypes = useMemo(() => {
+    const seen = new Map<string, number>();
+    for (const f of flowMarkers) {
+      const w = Math.abs(Number(f.float_ratio_pct ?? 0));
+      seen.set(f.investor_type, (seen.get(f.investor_type) ?? 0) + w);
+    }
+    return [...seen.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
+  }, [flowMarkers]);
+  const picked = useMemo(() => flowPick ?? flowTypes, [flowPick, flowTypes]);
 
   // 패턴 골격은 차트 캔버스에 직접 그린다(마커 + 넥라인/테두리 가격선).
   // SVG 오버레이보다 확실하게 함께 그려지고, 스크롤·줌에도 자동으로 따라간다.
@@ -248,52 +317,66 @@ export default function PriceChart({
 
     // 패턴 골격 + 수급 유입 마커를 한 번에 얹는다.
     // 수급 마커는 "언제 얼마나 들어왔는지"를 봉 위에 바로 보여주기 위한 것이다.
-    const patternMarkers: SeriesMarker<Time>[] = geometry.points.map((p) => ({
-      time: p.t as Time,
-      position: 'belowBar',
-      color: t.mark,
-      shape: 'circle',
-      text: p.label,
-    }));
+    // 패턴 골격은 위, 수급은 아래. 층을 나눠야 둘이 겹쳐 봉을 가리지 않는다.
+    const patternMarkers: SeriesMarker<Time>[] = geometry.points
+      .map((p) => {
+        const time = view.at.get(p.t);
+        return time
+          ? ({ time: time as Time, position: 'aboveBar', color: t.mark, shape: 'circle', text: p.label } as SeriesMarker<Time>)
+          : null;
+      })
+      .filter((m): m is SeriesMarker<Time> => m !== null);
 
-    const byDate = new Map<string, FlowMarker[]>();
-    for (const f of showFlow ? flowMarkers : []) {
-      const list = byDate.get(f.date) ?? [];
-      list.push(f);
-      byDate.set(f.date, list);
+    // 하루에 여러 주체가 겹치면 화살표가 봉을 덮어 캔들이 안 보였다.
+    // 고른 주체의 순매수 비율을 봉 단위로 합쳐 화살표 하나로 만들고 크기로 세기를 표현한다.
+    // 임계값에 못 미치는 날은 아예 그리지 않는다. 주봉·월봉에서는 그 구간 합계가 된다.
+    const pickSet = new Set(picked);
+    const perBar = new Map<string, { sum: number; topId: string; topPct: number }>();
+    if (showFlow) {
+      for (const f of flowMarkers) {
+        if (!pickSet.has(f.investor_type)) continue;
+        const time = view.at.get(f.date);
+        const pct = Number(f.float_ratio_pct ?? 0);
+        if (!time || !Number.isFinite(pct) || pct === 0) continue;
+        const cur = perBar.get(time) ?? { sum: 0, topId: f.investor_type, topPct: 0 };
+        cur.sum += pct;
+        if (Math.abs(pct) > Math.abs(cur.topPct)) { cur.topId = f.investor_type; cur.topPct = pct; }
+        perBar.set(time, cur);
+      }
     }
-    // 하루당 가장 큰 주체 하나만 남긴다.
-    const perDay = [...byDate.entries()].map(([date, list]) => {
-      const top = list
-        .map((f) => ({ ...f, pct: Number(f.float_ratio_pct ?? 0) }))
-        .sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct))[0];
-      return { date, top };
-    });
+    const strong = [...perBar.entries()]
+      .filter(([, v]) => Math.abs(v.sum) >= flowMin)
+      .sort((a, b) => Math.abs(b[1].sum) - Math.abs(a[1].sum));
+
     // 라벨을 전부 달면 매수세가 몰린 구간에서 글자가 겹쳐 아무것도 못 읽는다.
-    // 화살표는 모두 두되 글자는 큰 것부터 붙이되, 이미 붙인 라벨과
-    // MIN_GAP 봉 안쪽이면 건너뛴다. 개수 제한만으로는 한 구간에 몰려 여전히 겹친다.
-    const MAX_LABELS = 8;
-    const MIN_GAP = 7;
-    const barIndex = new Map(bars.map((b, i) => [b.date, i]));
+    // 화살표는 모두 두되 글자는 큰 것부터 붙이고, 이미 붙인 라벨과 MIN_GAP 봉
+    // 안쪽이면 건너뛴다. 개수 제한만으로는 한 구간에 몰려 여전히 겹친다.
+    const MAX_LABELS = 6;
+    const MIN_GAP = Math.max(4, Math.round(view.bars.length / 14));
+    const barIndex = new Map(view.bars.map((b, i) => [b.date, i]));
     const taken: number[] = [];
     const labelled = new Set<string>();
-    for (const d of [...perDay].sort((a, b) => Math.abs(b.top.pct) - Math.abs(a.top.pct))) {
+    for (const [time] of strong) {
       if (labelled.size >= MAX_LABELS) break;
-      const i = barIndex.get(d.date);
-      if (i === undefined) continue;
-      if (taken.some((j) => Math.abs(j - i) < MIN_GAP)) continue;
+      const i = barIndex.get(time);
+      if (i === undefined || taken.some((j) => Math.abs(j - i) < MIN_GAP)) continue;
       taken.push(i);
-      labelled.add(d.date);
+      labelled.add(time);
     }
-    const flowMarks: SeriesMarker<Time>[] = perDay.map(({ date, top }) => {
-      const buy = top.pct >= 0;
-      const label = investorLabels[top.investor_type] ?? top.investor_type;
+
+    const biggest = strong.length > 0 ? Math.abs(strong[0][1].sum) : 1;
+    const flowMarks: SeriesMarker<Time>[] = strong.map(([time, v]) => {
+      const buy = v.sum >= 0;
+      const share = Math.abs(v.sum) / biggest;
+      // 주체를 하나만 골랐으면 이름이 매번 같아 군더더기다. 숫자만 남긴다.
+      const name = picked.length === 1 ? '' : `${investorLabels[v.topId] ?? v.topId} `;
       return {
-        time: date as Time,
-        position: buy ? 'aboveBar' : 'belowBar',
+        time: time as Time,
+        position: 'belowBar',
         color: buy ? t.up : t.down,
         shape: buy ? 'arrowUp' : 'arrowDown',
-        text: labelled.has(date) ? `${label} ${top.pct >= 0 ? '+' : ''}${top.pct.toFixed(2)}%` : '',
+        size: share > 0.6 ? 1.6 : share > 0.25 ? 1.15 : 0.85,
+        text: labelled.has(time) ? `${name}${buy ? '+' : ''}${v.sum.toFixed(2)}%` : '',
       };
     });
 
@@ -354,7 +437,7 @@ export default function PriceChart({
       pivotLine.forEach((l) => candles.removePriceLine(l));
       supports.forEach((l) => candles.removePriceLine(l));
     };
-  }, [geometry, activePattern, bars, ready, flowMarkers, supportLines, investorLabels, showFlow, showLines]);
+  }, [geometry, activePattern, view, ready, flowMarkers, supportLines, investorLabels, showFlow, showLines, picked, flowMin]);
 
   /* ─── 차트 생성 ─── */
   useEffect(() => {
@@ -445,14 +528,14 @@ export default function PriceChart({
     const chart = chartRef.current;
     const candles = candleRef.current;
     const volume = volumeRef.current;
-    if (!chart || !candles || !volume || bars.length === 0) return;
+    if (!chart || !candles || !volume || view.bars.length === 0) return;
     const t = readTheme();
 
     candles.setData(
-      bars.map((b) => ({ time: b.date as Time, open: n(b.o), high: n(b.h), low: n(b.l), close: n(b.c) })),
+      view.bars.map((b) => ({ time: b.date as Time, open: n(b.o), high: n(b.h), low: n(b.l), close: n(b.c) })),
     );
     volume.setData(
-      bars.map((b) => ({
+      view.bars.map((b) => ({
         time: b.date as Time,
         value: n(b.volume),
         color: n(b.c) >= n(b.o) ? t.upSoft : t.downSoft,
@@ -464,7 +547,7 @@ export default function PriceChart({
     // 좌표가 잡힐 때까지 몇 번 더 오버레이를 다시 계산한다.
     const timers = [0, 60, 200, 600].map((ms) => window.setTimeout(() => setOverlayTick((x) => x + 1), ms));
     return () => timers.forEach(window.clearTimeout);
-  }, [bars]);
+  }, [view]);
 
   /* ─── 저장된 도형 불러오기 ─── */
   useEffect(() => {
@@ -573,8 +656,11 @@ export default function PriceChart({
     if (!chart || !candles) return { trends: [], points: [], lines: [] };
 
     const ts = chart.timeScale();
+    // 주·월봉에서는 일자를 묶인 봉의 시각으로 바꿔야 좌표가 잡힌다.
     const xy = (t: string, p: number) => {
-      const x = ts.timeToCoordinate(t as Time);
+      const time = view.at.get(t);
+      if (!time) return null;
+      const x = ts.timeToCoordinate(time as Time);
       const y = candles.priceToCoordinate(p);
       return x === null || y === null ? null : { x, y };
     };
@@ -604,70 +690,140 @@ export default function PriceChart({
       .filter((v) => v !== null);
 
     return { trends, points, lines };
-  }, [drawings, geometry, overlayTick]);
+  }, [drawings, geometry, overlayTick, view]);
 
   return (
     <div className="card">
-      <div className="panel-head flex-wrap items-center gap-2">
-        <span className="text-xs font-medium text-mute">그리기</span>
-        <button
-          onClick={() => {
-            setMode(mode === 'hline' ? 'none' : 'hline');
-            setPending(null);
-          }}
-          className="chip"
-          data-on={mode === 'hline' ? 'true' : 'false'}
-        >
-          수평 지지선
-        </button>
-        <button
-          onClick={() => {
-            setMode(mode === 'trend' ? 'none' : 'trend');
-            setPending(null);
-          }}
-          className="chip"
-          data-on={mode === 'trend' ? 'true' : 'false'}
-        >
-          추세선
-        </button>
-        <button
-          onClick={() => commit([])}
-          className="chip"
-        >
-          전체 지우기
-        </button>
-        <span className="text-xs text-faint">
-          {mode === 'hline' && '차트를 누르면 그 가격에 지지선을 그려요'}
-          {mode === 'trend' && (pending ? '끝점을 눌러 주세요' : '시작점을 눌러 주세요')}
-          {mode === 'none' && `도형 ${drawings.length}개, 새로고침해도 남아요`}
-        </span>
-        <span className="ml-auto text-xs text-faint">
-          {saved === 'saving' ? '저장 중' : saved === 'ok' ? '저장됨' : ''}
-        </span>
-
-        <label className="flex items-center gap-1 text-xs text-mute">
-          <input type="checkbox" checked={showFlow} onChange={(e) => setShowFlow(e.target.checked)} />
-          수급 마커
-        </label>
-        <label className="flex items-center gap-1 text-xs text-mute">
-          <input type="checkbox" checked={showLines} onChange={(e) => setShowLines(e.target.checked)} />
-          지지·저항선
-        </label>
-
-        {patterns.length > 0 && (
-          <select
-            value={showPattern}
-            onChange={(e) => setShowPattern(Number(e.target.value))}
-            className="input px-2 py-1 text-xs"
-          >
-            {patterns.map((p, i) => (
-              <option key={`${p.pattern}-${p.date ?? ''}-${i}`} value={i}>
-                {PATTERN_KO[p.pattern] ?? p.pattern} 겹쳐보기
-                {p.stage ? ` · ${STAGE_LABEL[p.stage] ?? p.stage}` : ''} (점수 {Number(p.score).toFixed(0)})
-              </option>
+      <div className="panel-head !flex-col !items-stretch gap-2.5">
+        {/* 첫 줄: 무엇을 보는가 (봉 주기·겹쳐 볼 패턴) + 그리기 도구 */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="seg" role="group" aria-label="봉 주기">
+            {(['D', 'W', 'M'] as TF[]).map((k) => (
+              <button
+                key={k}
+                type="button"
+                data-on={tf === k ? 'true' : 'false'}
+                aria-pressed={tf === k}
+                onClick={() => setTf(k)}
+              >
+                {TF_KO[k]}
+              </button>
             ))}
-          </select>
-        )}
+          </div>
+          <span className="text-[11.5px] text-faint">{view.bars.length}봉</span>
+
+          {patterns.length > 0 && (
+            <select
+              value={showPattern}
+              onChange={(e) => setShowPattern(Number(e.target.value))}
+              className="input !py-1 !text-[12px]"
+              aria-label="겹쳐 볼 패턴"
+            >
+              {patterns.map((p, i) => (
+                <option key={`${p.pattern}-${p.date ?? ''}-${i}`} value={i}>
+                  {PATTERN_KO[p.pattern] ?? p.pattern}
+                  {p.stage ? ` · ${STAGE_LABEL[p.stage] ?? p.stage}` : ''} (점수 {Number(p.score).toFixed(0)})
+                </option>
+              ))}
+            </select>
+          )}
+
+          <span className="ml-1 text-[12px] text-faint">그리기</span>
+          <button
+            onClick={() => { setMode(mode === 'hline' ? 'none' : 'hline'); setPending(null); }}
+            className="chip"
+            data-on={mode === 'hline' ? 'true' : 'false'}
+          >
+            수평선
+          </button>
+          <button
+            onClick={() => { setMode(mode === 'trend' ? 'none' : 'trend'); setPending(null); }}
+            className="chip"
+            data-on={mode === 'trend' ? 'true' : 'false'}
+          >
+            추세선
+          </button>
+          <button onClick={() => commit([])} className="chip">지우기</button>
+          <span className="text-[11.5px] text-faint">
+            {mode === 'hline' && '차트를 누르면 그 가격에 선을 그려요'}
+            {mode === 'trend' && (pending ? '끝점을 눌러 주세요' : '시작점을 눌러 주세요')}
+            {mode === 'none' && `도형 ${drawings.length}개`}
+          </span>
+          <span className="ml-auto text-[11.5px] text-faint">
+            {saved === 'saving' ? '저장 중' : saved === 'ok' ? '저장됨' : ''}
+          </span>
+        </div>
+
+        {/* 둘째 줄: 봉 위에 무엇을 얹는가 */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-t border-line pt-2.5">
+          <button
+            className="chip"
+            data-on={showFlow ? 'true' : 'false'}
+            aria-pressed={showFlow}
+            onClick={() => setShowFlow((v) => !v)}
+          >
+            수급 마커
+          </button>
+          <button
+            className="chip"
+            data-on={showLines ? 'true' : 'false'}
+            aria-pressed={showLines}
+            onClick={() => setShowLines((v) => !v)}
+          >
+            지지·저항선
+          </button>
+
+          {showFlow && flowTypes.length > 0 && (
+            <>
+              <span className="ml-1 text-[12px] text-faint">주체</span>
+              <button
+                className="chip"
+                data-on={flowPick === null ? 'true' : 'false'}
+                aria-pressed={flowPick === null}
+                onClick={() => setFlowPick(null)}
+              >
+                전체
+              </button>
+              {flowTypes.map((id) => {
+                const on = flowPick !== null && flowPick.includes(id);
+                return (
+                  <button
+                    key={id}
+                    className="chip"
+                    data-on={on ? 'true' : 'false'}
+                    aria-pressed={on}
+                    onClick={() =>
+                      // 전체 상태에서 하나를 누르면 그것만 보는 게 자연스럽다.
+                      // 그래서 null 은 빈 목록에서 시작한다.
+                      setFlowPick((cur) => {
+                        const base = cur ?? [];
+                        return base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
+                      })
+                    }
+                  >
+                    {investorLabels[id] ?? id}
+                  </button>
+                );
+              })}
+
+              <span className="ml-1 text-[12px] text-faint">최소</span>
+              <div className="seg" role="group" aria-label="마커 최소 강도">
+                {[0, 0.1, 0.3, 0.5].map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    data-on={flowMin === v ? 'true' : 'false'}
+                    aria-pressed={flowMin === v}
+                    onClick={() => setFlowMin(v)}
+                  >
+                    {v === 0 ? '전체' : `${v}%`}
+                  </button>
+                ))}
+              </div>
+              {picked.length === 0 && <span className="text-[11.5px] text-warn">주체를 하나 이상 골라 주세요</span>}
+            </>
+          )}
+        </div>
       </div>
 
       <div className="relative">

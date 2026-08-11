@@ -110,7 +110,9 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
     setErr(null);
     (async () => {
       try {
-        const res = await fetch(`/api/stock/${symbol}?days=240`);
+        // 주봉·월봉을 만들려면 일봉이 많이 필요하다. 마커는 화면에서 주체·세기로
+        // 거르므로 서버에서 미리 줄이지 않고 넉넉히 받는다.
+        const res = await fetch(`/api/stock/${symbol}?days=400&markerMinPct=0&markerLimit=400`);
         const body = await res.json().catch(() => null);
         if (!alive) return;
         if (!res.ok || !body || typeof body.error === 'string') {

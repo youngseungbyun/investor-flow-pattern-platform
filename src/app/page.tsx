@@ -48,7 +48,7 @@ interface RuleRow {
   close: number | null; changePct: number | null; tradedValue: number | null;
   floatShares: number | null; floatBasis: 'computed' | 'listed_shares';
   flows: Array<{ label: string; metric: string; value: number; onDate: string | null }>;
-  patterns: Array<{ pattern: string; ko: string; direction: Direction; stage: Stage; stageKo: string; score: number; pivotPrice: number | null; distancePct: number | null; barsSinceBreakout?: number | null; barsSinceFormed?: number | null }>;
+  patterns: Array<{ pattern: string; ko: string; direction: Direction; stage: Stage; stageKo: string; score: number; pivotPrice: number | null; distancePct: number | null; barsSinceBreakout?: number | null; barsSinceFormed?: number | null; breakoutVolumeRatio?: number | null }>;
   lines: Array<{ signal: string; score: number; detail: Record<string, unknown> }>;
   insiderBuys: number;
   rank: number;
@@ -546,7 +546,7 @@ function Empty({ children }: { children: React.ReactNode }) {
 
 function PatternTags({
   patterns,
-}: { patterns: Array<{ pattern: string; ko: string; direction: Direction; stage: Stage; stageKo?: string; score: number }> }) {
+}: { patterns: Array<{ pattern: string; ko: string; direction: Direction; stage: Stage; stageKo?: string; score: number; breakoutVolumeRatio?: number | null }> }) {
   if (!patterns?.length) return <span className="text-faint">-</span>;
   return (
     <div className="flex flex-wrap gap-1">
@@ -554,6 +554,15 @@ function PatternTags({
         <span key={p.pattern} className={DIR_TAG[p.direction]}>
           {p.ko}
           <span className={`${STAGE_TAG[p.stage] ?? 'tag tag-mute'} !px-1 !py-0`}>{p.stageKo ?? p.stage}</span>
+          {/* 돌파봉 거래량이 평소의 몇 배였는가. 1.5배부터 점수가 크게 붙는다. */}
+          {p.breakoutVolumeRatio ? (
+            <span
+              className={`num !px-1 !py-0 ${p.breakoutVolumeRatio >= 1.5 ? 'tag tag-accent' : 'opacity-55'}`}
+              title={`돌파봉 거래량이 직전 20봉 평균의 ${p.breakoutVolumeRatio.toFixed(2)}배`}
+            >
+              ×{p.breakoutVolumeRatio.toFixed(1)}
+            </span>
+          ) : null}
           <span className="num opacity-60">{Math.round(p.score)}</span>
         </span>
       ))}
