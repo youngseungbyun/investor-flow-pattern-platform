@@ -92,11 +92,20 @@ jobs:
         run: npm run batch -- dart --date ${{ steps.d.outputs.date }}
         continue-on-error: true
 
+      # 분석은 수집과 기준일이 다르다.
+      # 금융위 일봉은 T+1 이고 KIS 갭보강도 장이 끝나야 받는다. 그래서 "오늘"로
+      # 패턴을 돌리면 봉 없는 날을 판정해 매번 0건으로 끝나고, 뒤늦게 도착한
+      # 어제 일봉은 다음 회차의 기준일이 또 그다음 날이라 영영 판정되지 않았다.
+      # 실제로 08-11·08-12 이틀 연속 패턴·라인이 0건이었다.
+      - name: 분석 기준일 결정
+        id: a
+        run: echo "date=$(npx tsx scripts/last-bar-day.ts)" >> "$GITHUB_OUTPUT"
+
       - name: 패턴 판정
-        run: npm run batch -- patterns --date ${{ steps.d.outputs.date }}
+        run: npm run batch -- patterns --date ${{ steps.a.outputs.date }}
 
       - name: 지지선·시그널
-        run: npm run batch -- lines --date ${{ steps.d.outputs.date }}
+        run: npm run batch -- lines --date ${{ steps.a.outputs.date }}
 
       - name: 오래된 데이터 정리
         # 무료 DB 용량이 한정돼 있다. 수집과 같은 주기로 잘라 총량을 고정한다.
@@ -104,5 +113,5 @@ jobs:
 
       - name: 결과 요약
         if: always()
-        run: npm run batch -- verify --date ${{ steps.d.outputs.date }}
+        run: npm run batch -- verify --date ${{ steps.a.outputs.date || steps.d.outputs.date }}
         continue-on-error: true
