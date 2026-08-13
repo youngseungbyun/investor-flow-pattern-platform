@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "buildCommand": "node -e \"console.log('[db] DATABASE_URL:', process.env.DATABASE_URL ? 'present' : 'MISSING')\" && (npm run db:migrate || echo '[db] migration skipped') && npm run build",
+  "functions": {
+    "src/app/api/[...route]/route.ts": {
+      "maxDuration": 30
+    }
+  }
+}
