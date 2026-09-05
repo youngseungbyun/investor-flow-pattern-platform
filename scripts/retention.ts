@@ -19,8 +19,17 @@ import { exec, pool, query } from '../src/lib/core';
  * 일봉과 거래일 달력은 예외적으로 훨씬 길게 남긴다. 주봉·월봉 차트가 이 둘로만
  * 그려지는데 60거래일만 두면 월봉이 3개밖에 안 나온다. 일봉은 하루 약 2,900행이라
  * 3년치를 담아도 무료 한도 안에 들어온다. 용량을 실제로 먹는 건 분봉·수급이다.
+ *
+ * 2026-09-05: keep=60 이 실제로는 무료 한도(512MB)를 못 버텼다. flow_events·
+ * investor_flow_daily 가 하루 약 9,363행(일봉의 3.25배 — 종목당 여러 투자자
+ * 구분으로 나뉘어서다)이라 60거래일 다 채우면 이 둘만 322MB, 거기에 500거래일
+ * 다 채운 ohlcv_daily 210MB 를 더하면 정상 가동 중에도 한도를 넘긴다.
+ * 실제로 09-03~09-05 사이 그렇게 죽어 예약 수집이 통째로 멈췄었다([[investor_flow_platform_deploy]]).
+ * 조건 검색 기본값(`최근 N거래일`)도 5, `maxBarsSinceBreakout` 도 20 이 상한이라
+ * 25거래일이면 제품이 실제로 조회하는 범위를 이미 넉넉히 덮는다 — 60은 애초에
+ * 과했다. 안전 마진을 넉넉히 두려고 25로 낮췄다(예상 정상 가동 시 총량 ~380MB대).
  */
-const DEFAULT_KEEP = 60;
+const DEFAULT_KEEP = 25;
 const BAR_KEEP = 500;
 
 const TRIM: Array<[table: string, col: string, keep?: number]> = [
