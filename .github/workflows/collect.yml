@@ -116,7 +116,9 @@ jobs:
 
       - name: 오래된 데이터 정리
         # 무료 DB 용량이 한정돼 있다. 수집과 같은 주기로 잘라 총량을 고정한다.
-        run: npm run db:retention -- --keep 60
+        # --keep 을 명시하면 retention.ts 의 DEFAULT_KEEP(25) 을 무시하고 이 값이 이긴다.
+        # 60 으로 박아 뒀던 게 2026-09-05 용량 초과의 직접 원인이라 인자를 없애 기본값을 따르게 한다.
+        run: npm run db:retention
 
       - name: 결과 요약
         if: always()
