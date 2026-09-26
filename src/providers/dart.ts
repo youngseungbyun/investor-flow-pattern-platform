@@ -35,14 +35,21 @@ export async function syncCorpCodes(): Promise<number> {
     .map((r) => ({ corp: String(r.corp_code).padStart(8, '0'), stock: String(r.stock_code ?? '').trim() }))
     .filter((r) => r.stock.length === 6);
 
-  let n = 0;
-  for (const p of pairs) {
-    n += await exec(
-      `update instruments set corp_code = $1 where symbol = $2 and corp_code is distinct from $1`,
-      [p.corp, p.stock],
-    );
-  }
-  return n;
+  // 종목코드 하나에 corp_code 가 여럿이면 예전 한 행씩 갱신과 같게 뒤에 나온 값을 쓴다.
+  const byStock = new Map<string, string>();
+  for (const p of pairs) byStock.set(p.stock, p.corp);
+  if (byStock.size === 0) return 0;
+
+  // 한 행씩 UPDATE 하면 원격 DB 왕복이 약 3,900번이라 공시 스텝이 12~17분을 이것만으로 썼다(2026-09-26).
+  // 배열 두 개를 넘겨 한 문장으로 갱신한다.
+  return exec(
+    `update instruments i
+        set corp_code = v.corp
+       from unnest($1::text[], $2::text[]) as v(corp, stock)
+      where i.symbol = v.stock
+        and i.corp_code is distinct from v.corp`,
+    [[...byStock.values()], [...byStock.keys()]],
+  );
 }
 
 /* ──────────────────────────── 내부자 매수 ──────────────────────────── */
