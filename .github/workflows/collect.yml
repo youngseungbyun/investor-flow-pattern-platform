@@ -23,7 +23,10 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    # 2026-09-26: 50분이면 공시 스텝이 잡 전체를 잡아먹어 패턴·정리가 매번 skipped 였다
+    # (run 36212856437). 공시에 스텝 단위 상한(20분)을 따로 두고, 그 뒤 스텝
+    # (패턴 약 3분·지지선 약 6분·정리)이 들어갈 여유까지 잡아 75분으로 늘린다.
+    timeout-minutes: 75
 
     env:
       # 수집이 원격 DB 에 바로 쓴다. 로컬 PGlite 를 거치지 않는다.
@@ -82,8 +85,12 @@ jobs:
       - name: 수급 이벤트 정규화
         run: npm run batch -- flow-events --date ${{ steps.d.outputs.date }} --lookback 10
 
+      # 공시는 부가 정보라 실패하거나 느려도 분석을 막으면 안 된다.
+      # 원격 DB 에 행마다 왕복하는 구조라 오래 걸리는 날이 있어 스텝 상한을 따로 둔다.
+      # 시간 초과·실패 모두 continue-on-error 로 넘기고, 아래 스텝은 !cancelled() 로 계속 돈다.
       - name: 공시 (유통주식수·임원 매매)
         run: npm run batch -- dart --date ${{ steps.d.outputs.date }}
+        timeout-minutes: 20
         continue-on-error: true
 
       # 분석은 수집과 기준일이 다르다.
@@ -91,17 +98,24 @@ jobs:
       # 패턴을 돌리면 봉 없는 날을 판정해 매번 0건으로 끝나고, 뒤늦게 도착한
       # 어제 일봉은 다음 회차의 기준일이 또 그다음 날이라 영영 판정되지 않았다.
       # 실제로 08-11·08-12 이틀 연속 패턴·라인이 0건이었다.
+      #
+      # 여기부터는 앞 스텝(특히 공시)이 실패·시간 초과여도 돈다. 잡이 취소된 경우만 멈춘다.
+      # 패턴·지지선은 분석 기준일이 비면 --date 가 빈 값이 되므로 기준일이 있을 때만 돈다.
       - name: 분석 기준일 결정
         id: a
+        if: ${{ !cancelled() }}
         run: echo "date=$(npx tsx scripts/last-bar-day.ts)" >> "$GITHUB_OUTPUT"
 
       - name: 패턴 판정
+        if: ${{ !cancelled() && steps.a.outputs.date != '' }}
         run: npm run batch -- patterns --date ${{ steps.a.outputs.date }}
 
       - name: 지지선·시그널
+        if: ${{ !cancelled() && steps.a.outputs.date != '' }}
         run: npm run batch -- lines --date ${{ steps.a.outputs.date }}
 
       - name: 오래된 데이터 정리
+        if: ${{ !cancelled() }}
         # 무료 DB 용량이 한정돼 있다. 수집과 같은 주기로 잘라 총량을 고정한다.
         # --keep 을 명시하면 retention.ts 의 DEFAULT_KEEP(25) 을 무시하고 이 값이 이긴다.
         # 60 으로 박아 뒀던 게 2026-09-05 용량 초과의 직접 원인이라 인자를 없애 기본값을 따르게 한다.
