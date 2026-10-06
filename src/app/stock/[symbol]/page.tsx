@@ -232,6 +232,7 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
             <span className={`num text-[13px] font-semibold ${(change ?? 0) >= 0 ? 'up' : 'down'}`}>
               {change === null ? '' : `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`}
             </span>
+            <span className="text-[11.5px] text-faint">{last.date} 종가</span>
           </span>
         )}
         <div className="ml-auto">
@@ -395,7 +396,7 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
           <h2 className="panel-head panel-title">거래원별 (증권사 창구)</h2>
           {data.members.length === 0 ? (
             <p className="panel-body text-xs text-mute">
-              아직 데이터가 없어요. 거래원별 수급은 KRX Data Marketplace 계약이 필요해요.
+              거래원(증권사 창구)별 수급은 아직 제공하지 않아요.
             </p>
           ) : (
             <table className="w-full text-sm">
@@ -434,7 +435,7 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
             임원 소유상황 변동 (거래일 기준)
           </h2>
           {data.insiders.length === 0 ? (
-            <p className="panel-body text-xs text-mute">수집된 변동내역이 없어요.</p>
+            <p className="panel-body text-xs text-mute">최근 임원·주요주주의 장내 거래 내역이 없어요.</p>
           ) : (
             <table className="w-full text-sm">
               <thead className="border-b border-line-strong text-xs text-mute">
@@ -577,8 +578,7 @@ function ProgramPanel({ data }: { data: Payload }) {
         </div>
       ) : (
         <p className="panel-body text-xs text-mute">
-          분봉 프로그램매매 데이터가 없어요. KIS가 장중에만 내려주는 데이터라 09:00~15:30 사이에{' '}
-          <code className="rounded bg-surface-3 px-1">npm run batch -- minute</code> 로 수집해 주세요.
+          장중 분봉 프로그램매매는 거래시간(09:00~15:30)에 쌓인 날만 보여요. 아래 표는 일별 값이에요.
         </p>
       )}
 
@@ -599,7 +599,7 @@ function ProgramPanel({ data }: { data: Payload }) {
             {rows.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-4 py-6 text-center text-xs text-mute">
-                  프로그램매매 일별 데이터가 없어요. <code className="rounded bg-surface-3 px-1">npm run batch -- program</code> 로 수집해 주세요.
+                  이 종목의 프로그램매매 일별 데이터가 아직 없어요.
                 </td>
               </tr>
             )}
