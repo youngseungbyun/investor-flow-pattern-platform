@@ -272,8 +272,10 @@ export async function linesForSymbol(symbol: string, date: string): Promise<Supp
   }>(
     `select line_id, price, kind, touches,
             to_char(first_at,'YYYY-MM-DD') first_at, to_char(last_at,'YYYY-MM-DD') last_at, strength
-       from support_lines where symbol = $1 and date = $2
-       order by strength desc`,
+       from support_lines
+      where symbol = $1
+        and date = (select max(date) from support_lines where symbol = $1 and date <= $2)
+      order by strength desc`,
     [symbol, date],
   );
   return rows.map((r) => ({

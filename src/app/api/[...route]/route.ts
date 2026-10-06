@@ -594,7 +594,9 @@ async function stockPayload(symbol: string, q: URLSearchParams) {
 
   const lines = await linesForSymbol(symbol, date);
   const lineSignals = await query(
-    `select signal, score, detail_json as detail from line_signals where symbol = $1 and date = $2`,
+    `select signal, score, detail_json as detail from line_signals
+      where symbol = $1
+        and date = (select max(date) from line_signals where symbol = $1 and date <= $2)`,
     [symbol, date],
   );
 
