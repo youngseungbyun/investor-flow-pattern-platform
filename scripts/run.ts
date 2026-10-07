@@ -98,6 +98,8 @@ async function stepOhlcvKis(dateIso: string, days: number) {
   const rows: Array<[string, string, number, number, number, number, number, number]> = [];
   const dateSet = new Set<string>();
   let done = 0;
+  let failed = 0;
+  let streak = 0;
 
   for (const symbol of symbols) {
     try {
@@ -110,10 +112,15 @@ async function stepOhlcvKis(dateIso: string, days: number) {
         dateSet.add(b.date);
         rows.push([symbol, b.date, b.o, b.h, b.l, b.c, b.volume, b.tradedValue]);
       }
-    } catch {
-      // 개별 종목 실패는 건너뛴다. 총계는 아래 로그로 확인한다.
+      streak = 0;
+    } catch (e) {
+      // 개별 종목 실패는 건너뛰되, 첫 오류는 남기고 연속 실패면 멈춘다.
+      // 2026-09-28: 러너에서 종목당 10초씩 조용히 실패해 70분을 태우고 취소됐다.
+      failed++;
+      if (failed === 1) console.log(`  첫 실패 [${symbol}]: ${errMessage(e)}`);
+      if (++streak >= 15) throw new Error(`KIS 일봉이 연속 ${streak}종목 실패해 중단합니다: ${errMessage(e)}`);
     }
-    if (++done % 100 === 0) console.log(`  ${done}/${symbols.length}종목 · 누적 ${rows.length}행`);
+    if (++done % 100 === 0) console.log(`  ${done}/${symbols.length}종목 · 누적 ${rows.length}행 · 실패 ${failed}`);
   }
 
   if (rows.length === 0) {

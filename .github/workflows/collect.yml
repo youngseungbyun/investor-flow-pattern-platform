@@ -72,6 +72,7 @@ jobs:
       # KIS 는 마감 직후 바로 주므로 그 공백만 메운다. 끝나지 않은 세션은
       # 스텝 안에서 걸러지므로 장중에 돌아도 안전하다.
       - name: 일봉 공백 보강 (KIS)
+        timeout-minutes: 15
         run: npm run batch -- ohlcv-kis --date ${{ steps.d.outputs.date }} --days 5
         continue-on-error: true
 
