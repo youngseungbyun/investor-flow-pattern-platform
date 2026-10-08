@@ -278,7 +278,7 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
         <div className="panel-head flex-wrap items-center gap-3">
           <h2 className="panel-title">투자자별 수급</h2>
           <div className="flex gap-1">
-            {[1, 5, 20, 60].map((d) => (
+            {[1, 5, 10, 20, 25].map((d) => (
               <button
                 key={d}
                 onClick={() => setWindowDays(d)}

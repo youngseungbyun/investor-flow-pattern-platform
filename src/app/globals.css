@@ -242,7 +242,9 @@ body {
 
 /* KPI 숫자. Astryx 처럼 큰 글자를 얇게 둔다. 굵게 키우면 값싸 보인다. */
 .kpi-value {
-  font-size: 25px;
+  /* 휴대폰 두 칸 폭(약 150px)에 열 자리 숫자가 들어가야 한다. 화면 폭에 맞춰 줄인다. */
+  font-size: clamp(17px, 5.1vw, 25px);
+  overflow-wrap: anywhere;
   font-weight: 400;
   letter-spacing: -0.022em;
   line-height: 1.12;

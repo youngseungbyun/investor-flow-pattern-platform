@@ -174,10 +174,11 @@ export default function Dashboard() {
             수급, 패턴, 라인을 한 화면에서 조합해 찾습니다
           </span>
 
-          <div className="ml-auto flex items-center gap-2 pb-1.5">
+          {/* 휴대폰에서는 한 줄에 다 안 들어가므로 이 줄만 옆으로 밀어 본다(세로로 쪼개지지 않게). */}
+          <div className="flex w-full items-center gap-2 overflow-x-auto pb-1.5 [scrollbar-width:none] sm:ml-auto sm:w-auto sm:overflow-visible [&>*]:shrink-0">
             {/* 조건으로 찾는 화면이지만 이미 아는 종목으로 바로 갈 길도 있어야 한다. */}
             <SymbolSearch />
-            <label className="flex items-center gap-1.5 text-[12px] text-mute">
+            <label className="flex items-center gap-1.5 whitespace-nowrap text-[12px] text-mute">
               기준일
               {fromDate !== '' && (
                 <>
@@ -522,7 +523,8 @@ function Switch({ on, onChange, label }: { on: boolean; onChange: (v: boolean) =
 
 /** 높이 접기. 접힌 영역은 눈에서 사라져도 탭 이동에는 남으므로 inert 로 빼 준다. */
 function Collapse({ open, children }: { open: boolean; children: React.ReactNode }) {
-  const off = { inert: '' } as unknown as React.HTMLAttributes<HTMLDivElement>;
+  // React 19 는 inert 를 boolean 으로 받는다. 빈 문자열은 false 로 읽혀 경고만 나고 접히지도 않는다.
+  const off = { inert: true } as unknown as React.HTMLAttributes<HTMLDivElement>;
   return (
     <div className="fold" data-open={open ? 'true' : 'false'} {...(open ? {} : off)}>
       <div>{children}</div>

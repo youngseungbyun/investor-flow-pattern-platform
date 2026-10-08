@@ -71,7 +71,7 @@ export function pool(): Pool {
     const schema = str('DB_SCHEMA');
     globalThis.__sdPool = new Pool({
       connectionString: env.databaseUrl,
-      max: num('PG_POOL_MAX', 4),
+      max: num('PG_POOL_MAX', 8),
       idleTimeoutMillis: 30_000,
       // Supabase 는 전용 스키마(market)에 넣는다. 로컬 PGlite 는 public 을 그대로 쓴다.
       // URL 쿼리스트링 대신 연결 옵션으로 넘겨야 인코딩 문제가 없다.

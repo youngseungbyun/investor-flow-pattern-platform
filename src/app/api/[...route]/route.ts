@@ -33,6 +33,14 @@ type Ctx = { params: Promise<{ route: string[] }> };
 
 const json = (data: unknown, status = 200) => NextResponse.json(data, { status });
 const bad = (message: string, status = 400) => json({ error: message }, status);
+/**
+ * 하루 한 번 바뀌는 데이터라 엣지에 잠깐 붙여 둔다. 같은 종목을 다시 열거나 새로고침할 때
+ * Neon 까지 다녀오지 않는다. 지난 값을 먼저 주고 뒤에서 새로 받는다(stale-while-revalidate).
+ */
+const cached = (data: unknown, sec = 60) =>
+  NextResponse.json(data, {
+    headers: { 'Cache-Control': `public, s-maxage=${sec}, stale-while-revalidate=${sec * 10}` },
+  });
 
 export async function GET(req: Request, ctx: Ctx) {
   const { route } = await ctx.params;
@@ -41,16 +49,16 @@ export async function GET(req: Request, ctx: Ctx) {
   try {
     switch (route[0]) {
       case 'status':
-        return json(await statusPayload());
+        return cached(await statusPayload(), 60);
       case 'periods':
-        return json({ periods: await availablePeriods() });
+        return cached({ periods: await availablePeriods() }, 300);
       case 'screener':
         return json(await screenerPayload(q));
       case 'patterns':
         return json(await patternsPayload(q));
       case 'stock':
         if (!route[1]) return bad('symbol 이 필요합니다.');
-        return json(await stockPayload(route[1], q));
+        return cached(await stockPayload(route[1], q), 120);
       case 'catalog':
         return json(catalogPayload());
       case 'find':
@@ -467,27 +475,25 @@ async function stockPayload(symbol: string, q: URLSearchParams) {
   const date = q.get('date') ?? todayKst();
   const days = Math.min(400, Number(q.get('days') ?? 120));
 
-  const instrument = (
-    await query(
-      `select symbol, name, market, isin, corp_code,
-              listed_shares, major_holder_shares, treasury_shares,
-              free_float_shares, free_float_basis,
-              to_char(free_float_updated_at,'YYYY-MM-DD') free_float_updated_at
-         from instruments where symbol = $1`,
-      [symbol],
-    )
-  )[0];
-  if (!instrument) throw new Error(`종목을 찾을 수 없습니다: ${symbol}`);
+  // 서로 의존하지 않는 질의는 한꺼번에 던진다. 순서대로 await 하면 Neon(싱가포르)까지의
+  // 왕복이 질의 수만큼 쌓여 상세 페이지가 몇 초씩 걸렸다. 아래에서 한 번에 받는다.
+  const instrumentP = query(
+    `select symbol, name, market, isin, corp_code,
+            listed_shares, major_holder_shares, treasury_shares,
+            free_float_shares, free_float_basis,
+            to_char(free_float_updated_at,'YYYY-MM-DD') free_float_updated_at
+       from instruments where symbol = $1`,
+    [symbol],
+  );
 
-  const bars = await query(
+  const barsP = query(
     `select to_char(date,'YYYY-MM-DD') date, o, h, l, c, volume, traded_value
        from ohlcv_daily where symbol = $1 and date <= $2
        order by date desc limit $3`,
     [symbol, date, days],
   );
-  bars.reverse();
 
-  const flow = await query(
+  const flowP = query(
     `select to_char(date,'YYYY-MM-DD') date, investor_type, net_buy_qty, net_buy_amount, source
        from investor_flow_daily
       where symbol = $1 and date <= $2
@@ -495,14 +501,14 @@ async function stockPayload(symbol: string, q: URLSearchParams) {
     [symbol, date, days * 12],
   );
 
-  const periods = await query(
+  const periodsP = query(
     `select to_char(start_date,'YYYY-MM-DD') start, to_char(end_date,'YYYY-MM-DD') "end",
             investor_type, net_buy_qty, net_buy_amount, source
        from investor_flow_period where symbol = $1 order by end_date desc`,
     [symbol],
   );
 
-  const members = await query(
+  const membersP = query(
     `select to_char(date,'YYYY-MM-DD') date, member_name, buy_qty, sell_qty,
             (buy_qty - sell_qty) as net_qty, source
        from member_flow_daily where symbol = $1 and date <= $2
@@ -510,20 +516,18 @@ async function stockPayload(symbol: string, q: URLSearchParams) {
     [symbol, date],
   );
 
-  const insiders = (
-    await query(
-      `select rcept_no, to_char(trade_date,'YYYY-MM-DD') trade_date,
-              to_char(disclosed_at,'YYYY-MM-DD') disclosed_at,
-              officer_name, position, registered, change_qty, method, is_open_market_buy
-         from insider_trades where symbol = $1
-         order by trade_date desc nulls last limit 50`,
-      [symbol],
-    )
-  ).map((r) => ({ ...r, dartUrl: dartViewerUrl(String(r.rcept_no)) }));
+  const insidersP = query(
+    `select rcept_no, to_char(trade_date,'YYYY-MM-DD') trade_date,
+            to_char(disclosed_at,'YYYY-MM-DD') disclosed_at,
+            officer_name, position, registered, change_qty, method, is_open_market_buy
+       from insider_trades where symbol = $1
+       order by trade_date desc nulls last limit 50`,
+    [symbol],
+  );
 
   // 스캔 날짜를 섞으면 같은 패턴이 날짜별로 중복돼 내려간다(쌍바닥 08-05 + 08-06).
   // 종목 상세가 보여줄 것은 "지금 이 종목의 패턴"이므로 최신 스캔 날짜 하나로 한정한다.
-  const patterns = await query(
+  const patternsP = query(
     `select pattern, score, confirmed, evidence_json as evidence,
             to_char(date,'YYYY-MM-DD') date, direction, stage,
             pivot_price, distance_pct
@@ -554,14 +558,11 @@ async function stockPayload(symbol: string, q: URLSearchParams) {
         limit $5::int`,
       [symbol, date, days, minPct, markerLimit],
     );
-  let flowMarkers = await markerSql(markerMinPct);
-  let markerFallback = false;
-  if (flowMarkers.length === 0) {
-    flowMarkers = await markerSql(0);
-    markerFallback = flowMarkers.length > 0;
-  }
+  // 임계값 질의와 대체(0) 질의를 둘 다 미리 던져 두고, 앞쪽이 비었을 때만 뒤쪽을 쓴다.
+  const markersP = markerSql(markerMinPct);
+  const markersAnyP = markerMinPct > 0 ? markerSql(0) : markersP;
 
-  const programDaily = await query(
+  const programDailyP = query(
     `select to_char(date,'YYYY-MM-DD') date, buy_qty, sell_qty, net_qty, net_amt
        from program_trade_daily where symbol = $1 and date <= $2
        order by date desc limit 60`,
@@ -571,34 +572,50 @@ async function stockPayload(symbol: string, q: URLSearchParams) {
   // KIS 분봉 API 는 요청 날짜와 무관하게 "최근 세션" 분봉만 준다.
   // 그래서 일봉 기준일로 조회하면 대개 빈 결과가 나온다.
   // 명시 지정이 없으면 이 종목이 실제로 보유한 최신 분봉 날짜를 쓴다.
-  const minuteDate =
-    q.get('minuteDate') ??
-    (
-      await query<{ d: string | null }>(
-        `select to_char(max(ts) at time zone 'Asia/Seoul', 'YYYY-MM-DD') d
-           from ohlcv_minute where symbol = $1`,
-        [symbol],
-      )
-    )[0]?.d ??
-    date;
-  const minute = await query(
-    `select to_char(m.ts at time zone 'Asia/Seoul', 'YYYY-MM-DD"T"HH24:MI:SS') ts,
-            m.o, m.h, m.l, m.c, m.volume,
-            p.buy_qty as pgm_buy, p.sell_qty as pgm_sell, p.net_qty as pgm_net, p.net_amt as pgm_net_amt
-       from ohlcv_minute m
-       left join program_trade_minute p on p.symbol = m.symbol and p.ts = m.ts
-      where m.symbol = $1 and m.ts >= $2::date and m.ts < ($2::date + 1)
-      order by m.ts`,
-    [symbol, minuteDate],
-  );
+  const minuteP = (async () => {
+    const minuteDate =
+      q.get('minuteDate') ??
+      (
+        await query<{ d: string | null }>(
+          `select to_char(max(ts) at time zone 'Asia/Seoul', 'YYYY-MM-DD') d
+             from ohlcv_minute where symbol = $1`,
+          [symbol],
+        )
+      )[0]?.d ??
+      date;
+    return query(
+      `select to_char(m.ts at time zone 'Asia/Seoul', 'YYYY-MM-DD"T"HH24:MI:SS') ts,
+              m.o, m.h, m.l, m.c, m.volume,
+              p.buy_qty as pgm_buy, p.sell_qty as pgm_sell, p.net_qty as pgm_net, p.net_amt as pgm_net_amt
+         from ohlcv_minute m
+         left join program_trade_minute p on p.symbol = m.symbol and p.ts = m.ts
+        where m.symbol = $1 and m.ts >= $2::date and m.ts < ($2::date + 1)
+        order by m.ts`,
+      [symbol, minuteDate],
+    );
+  })();
 
-  const lines = await linesForSymbol(symbol, date);
-  const lineSignals = await query(
+  const linesP = linesForSymbol(symbol, date);
+  const lineSignalsP = query(
     `select signal, score, detail_json as detail from line_signals
       where symbol = $1
         and date = (select max(date) from line_signals where symbol = $1 and date <= $2)`,
     [symbol, date],
   );
+
+  const [
+    instrument, bars, flow, periods, members, insiderRows, patterns,
+    markersFirst, markersAny, programDaily, minute, lines, lineSignals,
+  ] = await Promise.all([
+    instrumentP.then((r) => r[0]),
+    barsP, flowP, periodsP, membersP, insidersP, patternsP,
+    markersP, markersAnyP, programDailyP, minuteP, linesP, lineSignalsP,
+  ]);
+  if (!instrument) throw new Error(`종목을 찾을 수 없습니다: ${symbol}`);
+  bars.reverse();
+  const insiders = insiderRows.map((r) => ({ ...r, dartUrl: dartViewerUrl(String(r.rcept_no)) }));
+  const markerFallback = markersFirst.length === 0 && markersAny.length > 0;
+  const flowMarkers = markerFallback ? markersAny : markersFirst;
 
   return {
     instrument,
