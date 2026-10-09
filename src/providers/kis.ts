@@ -18,6 +18,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { bulkInsert, compact, expand, parseNum, sleep } from '../lib/core';
+import { mapPool } from '../lib/pool';
 import type { FlowRow, InvestorFlowProvider, InvestorType } from './investor-flow';
 
 /* ──────────────────────────── 설정 ──────────────────────────── */
@@ -29,6 +30,9 @@ const RATE_PER_SEC = Number(process.env.KIS_RATE_PER_SEC ?? (DOMAIN.includes('vt
 const TOKEN_CACHE =
   process.env.KIS_TOKEN_CACHE ??
   path.join(process.env.LOCALAPPDATA ?? '.', 'supply-demand-dashboard', 'kis-token.json');
+
+/** 동시에 날리는 요청 수. 실전 한도(초당 15건)를 채우려면 지연 150ms 기준 3~4개면 되지만 여유를 둔다. */
+export const KIS_CONCURRENCY = Number(process.env.KIS_CONCURRENCY ?? (DOMAIN.includes('vts') ? 1 : 6));
 
 export const kisConfigured = () => Boolean(APP_KEY() && APP_SECRET());
 export const kisIsPaper = () => DOMAIN.includes('vts');
@@ -85,9 +89,18 @@ function writeCache(t: CachedToken) {
   }
 }
 
-export async function accessToken(): Promise<string> {
+/** 동시 호출이 한꺼번에 토큰을 발급받으려 하면 분당 1회 제한에 걸린다. 진행 중인 발급을 공유한다. */
+let tokenInflight: Promise<string> | null = null;
+
+export function accessToken(): Promise<string> {
+  if (memToken && memToken.expires_at > Date.now() + 60_000) return Promise.resolve(memToken.access_token);
+  return (tokenInflight ??= issueToken().finally(() => {
+    tokenInflight = null;
+  }));
+}
+
+async function issueToken(): Promise<string> {
   if (!kisConfigured()) throw new Error('KIS_APP_KEY / KIS_APP_SECRET 가 필요합니다.');
-  if (memToken && memToken.expires_at > Date.now() + 60_000) return memToken.access_token;
 
   const cached = readCache();
   if (cached) {
@@ -250,16 +263,16 @@ export const kisProvider: InvestorFlowProvider = {
     return kisConfigured();
   },
   async fetchDaily(symbols, from, to) {
-    const out: FlowRow[] = [];
-    for (const symbol of symbols) {
+    // 종목당 1건이라 하나씩 기다리면 왕복 지연만큼 느려진다. 겹쳐 보내고 한도는 gate() 가 지킨다.
+    const per = await mapPool(symbols, KIS_CONCURRENCY, async (symbol) => {
       try {
-        const rows = await fetchInvestorFlow(symbol, to);
-        for (const r of rows) if (r.date >= from && r.date <= to) out.push(r);
+        return (await fetchInvestorFlow(symbol, to)).filter((r) => r.date >= from && r.date <= to);
       } catch {
         // 개별 종목 실패는 건너뛴다. 배치 로그에 총 건수로 남는다.
+        return [] as FlowRow[];
       }
-    }
-    return out;
+    });
+    return per.flat();
   },
 };
 

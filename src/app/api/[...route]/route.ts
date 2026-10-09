@@ -20,6 +20,7 @@ import {
   type ScreenerParams,
 } from '@/domain/screener';
 import { INVESTOR_LABEL, activeProviders, type InvestorType } from '@/providers/investor-flow';
+import { FLOW_LABEL, HANDBUY_LABEL } from '@/domain/handbuy';
 import { dartViewerUrl } from '@/providers/dart';
 import { kisInfo } from '@/providers/kis';
 import { PATTERN_CATALOG, STAGE_KO } from '@/domain/patterns';
@@ -61,6 +62,8 @@ export async function GET(req: Request, ctx: Ctx) {
         return cached(await stockPayload(route[1], q), 120);
       case 'catalog':
         return json(catalogPayload());
+      case 'handbuy':
+        return cached(await handbuyPayload(q), 60);
       case 'find':
         return json({ items: await findInstruments(q.get('q') ?? '') });
       case 'lines':
@@ -273,6 +276,11 @@ function catalogPayload() {
         : id === 'other_corp' ? '기타법인'
         : '기관',
     })),
+    // 조건 검색은 손매수 가상 주체까지 고를 수 있다. 상단 비교 차트(investors)는 원자료 주체만.
+    flowInvestors: [
+      ...(Object.keys(INVESTOR_LABEL) as InvestorType[]).map((id) => ({ id, ko: INVESTOR_LABEL[id] })),
+      ...Object.entries(HANDBUY_LABEL).map(([id, ko]) => ({ id, ko })),
+    ],
     patterns: PATTERN_CATALOG,
     stages: Object.entries(STAGE_KO).map(([id, ko]) => ({ id, ko })),
     lineSignals: Object.entries(SIGNAL_KO).map(([id, ko]) => ({ id, ko })),
@@ -281,6 +289,8 @@ function catalogPayload() {
       { id: 'amount', ko: '순매수 금액(원)' },
       { id: 'turnover_x', ko: '평소 거래대금 대비 배수' },
       { id: 'qty', ko: '순매수 수량(주)' },
+      { id: 'z_score', ko: '평소 대비 이탈(σ, 20일)' },
+      { id: 'streak', ko: '연속 순매수 일수' },
     ],
     kis: kisInfo(),
     defaultRule: DEFAULT_RULE,
@@ -441,7 +451,7 @@ async function patternsPayload(q: URLSearchParams) {
     count: rows.length,
     stageLabels: STAGE_KO,
     signalLabels: SIGNAL_KO,
-    investorLabels: INVESTOR_LABEL,
+    investorLabels: FLOW_LABEL,
     catalog: PATTERN_CATALOG,
     rows,
   };
@@ -469,6 +479,65 @@ async function findInstruments(raw: string) {
       limit 12`,
     [like, `${term}%`],
   );
+}
+
+/**
+ * 손매수 상위. 외국인·기관·합계 중 하나를 골라 그날 직접 주문으로 가장 많이 산(판) 종목을 준다.
+ * 손매수는 (외국인+기관 순매수) − 프로그램 순매수이고, flow_events 의 가상 주체로 들어 있다.
+ */
+async function handbuyPayload(q: URLSearchParams) {
+  const date = q.get('date') ?? todayKst();
+  const kind = q.get('kind') ?? 'total';
+  const side = q.get('side') === 'sell' ? 'sell' : 'buy';
+  const market = q.get('market');
+  const limit = Math.min(100, Math.max(1, Number(q.get('limit') ?? 30)));
+  const type = kind === 'foreign' ? 'handbuy_foreign' : kind === 'institution' ? 'handbuy_institution' : 'handbuy_total';
+
+  const day = (
+    await query<{ d: string | null }>(
+      `select to_char(max(date),'YYYY-MM-DD') d from flow_events
+        where investor_type = 'handbuy_total' and date <= $1::date`,
+      [date],
+    )
+  )[0]?.d;
+  if (!day) {
+    return {
+      date: null,
+      rows: [],
+      notes: ['아직 손매수를 계산할 프로그램매매 데이터가 없어요. 다음 수집 때부터 쌓여요.'],
+    };
+  }
+
+  const rows = await query(
+    `select e.symbol, i.name, i.market,
+            e.net_buy_amount::text amt, e.net_buy_qty::text qty,
+            e.float_ratio_pct::text pct, e.z20::text z, e.streak,
+            o.c::text close,
+            round((o.c / nullif(po.c, 0) - 1) * 100, 2)::text chg,
+            o.traded_value::text tv,
+            p.net_amt::text prog
+       from flow_events e
+       join instruments i on i.symbol = e.symbol
+       left join ohlcv_daily o on o.symbol = e.symbol and o.date = e.date
+       left join lateral (
+         select c from ohlcv_daily where symbol = e.symbol and date < e.date order by date desc limit 1
+       ) po on true
+       left join program_trade_daily p on p.symbol = e.symbol and p.date = e.date
+      where e.date = $1::date and e.investor_type = $2 and e.net_buy_amount is not null
+        and ($3::text is null or i.market = $3)
+      order by e.net_buy_amount ${side === 'buy' ? 'desc' : 'asc'}
+      limit $4::int`,
+    [day, type, market, limit],
+  );
+  return {
+    date: day,
+    kind,
+    side,
+    rows,
+    notes: [
+      '손매수 = (외국인+기관 순매수) − 프로그램 순매수. 프로그램매매가 외국인·기관이라고 보고 뺀 근사치예요.',
+    ],
+  };
 }
 
 async function stockPayload(symbol: string, q: URLSearchParams) {
@@ -530,7 +599,7 @@ async function stockPayload(symbol: string, q: URLSearchParams) {
   const patternsP = query(
     `select pattern, score, confirmed, evidence_json as evidence,
             to_char(date,'YYYY-MM-DD') date, direction, stage,
-            pivot_price, distance_pct
+            pivot_price, distance_pct, hist_win, hist_n
        from pattern_hits
       where symbol = $1
         and date = (select max(date) from pattern_hits where symbol = $1)
@@ -549,7 +618,7 @@ async function stockPayload(symbol: string, q: URLSearchParams) {
   const markerSql = (minPct: number) =>
     query(
       `select to_char(e.date,'YYYY-MM-DD') date, e.investor_type, e.net_buy_qty, e.net_buy_amount,
-              e.float_ratio_pct, e.turnover_x, e.float_basis
+              e.float_ratio_pct, e.turnover_x, e.float_basis, e.z20, e.streak
          from flow_events e
         where e.symbol = $1 and e.date <= $2::date and e.date >= ($2::date - $3::int)
           and e.investor_type <> 'institution_total'
@@ -561,6 +630,16 @@ async function stockPayload(symbol: string, q: URLSearchParams) {
   // 임계값 질의와 대체(0) 질의를 둘 다 미리 던져 두고, 앞쪽이 비었을 때만 뒤쪽을 쓴다.
   const markersP = markerSql(markerMinPct);
   const markersAnyP = markerMinPct > 0 ? markerSql(0) : markersP;
+
+  // 손매수(프로그램 제외) 일별. 외국인·기관·합계가 flow_events 의 가상 주체로 들어 있다.
+  const handbuyP = query(
+    `select to_char(date,'YYYY-MM-DD') date, investor_type, net_buy_amount::text amt,
+            float_ratio_pct::text pct
+       from flow_events
+      where symbol = $1 and date <= $2::date and investor_type like 'handbuy\\_%'
+      order by date`,
+    [symbol, date],
+  );
 
   const programDailyP = query(
     `select to_char(date,'YYYY-MM-DD') date, buy_qty, sell_qty, net_qty, net_amt
@@ -605,11 +684,11 @@ async function stockPayload(symbol: string, q: URLSearchParams) {
 
   const [
     instrument, bars, flow, periods, members, insiderRows, patterns,
-    markersFirst, markersAny, programDaily, minute, lines, lineSignals,
+    markersFirst, markersAny, programDaily, handbuy, minute, lines, lineSignals,
   ] = await Promise.all([
     instrumentP.then((r) => r[0]),
     barsP, flowP, periodsP, membersP, insidersP, patternsP,
-    markersP, markersAnyP, programDailyP, minuteP, linesP, lineSignalsP,
+    markersP, markersAnyP, programDailyP, handbuyP, minuteP, linesP, lineSignalsP,
   ]);
   if (!instrument) throw new Error(`종목을 찾을 수 없습니다: ${symbol}`);
   bars.reverse();
@@ -629,12 +708,13 @@ async function stockPayload(symbol: string, q: URLSearchParams) {
     insiders,
     patterns,
     programDaily,
+    handbuy,
     minute,
     lines,
     lineSignals,
     signalLabels: SIGNAL_KO,
     stageLabels: STAGE_KO,
-    investorLabels: INVESTOR_LABEL,
+    investorLabels: FLOW_LABEL,
   };
 }
 

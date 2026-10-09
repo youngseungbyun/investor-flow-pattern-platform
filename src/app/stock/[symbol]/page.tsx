@@ -63,6 +63,7 @@ interface Payload {
   lineSignals?: Array<{ signal: string; score: string; detail: Record<string, unknown> }>;
   minute?: MinuteRow[];
   programDaily?: Array<{ date: string; buy_qty: string; sell_qty: string; net_qty: string; net_amt: string }>;
+  handbuy?: Array<{ date: string; investor_type: string; amt: string; pct: string | null }>;
   signalLabels?: Record<string, string>;
   stageLabels?: Record<string, string>;
   instrument: {
@@ -271,6 +272,8 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
           investorLabels={data.investorLabels}
         />
       </section>
+
+      <HandBuyChart data={data} />
 
       <ProgramPanel data={data} />
 
@@ -512,6 +515,60 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
  * 분봉 프로그램 데이터는 장중에만 채워진다(KIS 실시간). 비어 있으면 그 사실을 그대로 알린다.
  * 프로그램 제외 외국인 = 외국인 순매수 − 프로그램 순매수 (근사치임을 명시한다).
  */
+/** 손매수(프로그램 제외) 일별. 외국인·기관이 직접 주문으로 산 금액을 날짜별로 나란히 본다. */
+function HandBuyChart({ data }: { data: Payload }) {
+  const rows = useMemo(() => {
+    const by = new Map<string, { date: string; foreign?: number; institution?: number; total?: number }>();
+    for (const r of data.handbuy ?? []) {
+      const cur = by.get(r.date) ?? { date: r.date };
+      const v = Number(r.amt) / 1e8; // 억원
+      if (r.investor_type === 'handbuy_foreign') cur.foreign = v;
+      else if (r.investor_type === 'handbuy_institution') cur.institution = v;
+      else if (r.investor_type === 'handbuy_total') cur.total = v;
+      by.set(r.date, cur);
+    }
+    return [...by.values()].sort((a, b) => a.date.localeCompare(b.date)).map((r) => ({ ...r, date: r.date.slice(5) }));
+  }, [data.handbuy]);
+
+  return (
+    <section className="card mb-4">
+      <div className="panel-head flex-wrap items-center gap-3">
+        <h2 className="panel-title">손매수 (프로그램 제외)</h2>
+        <span className="text-xs text-faint">
+          (외국인+기관 순매수) − 프로그램 순매수 · 프로그램을 외국인·기관이라고 보고 뺀 근사치
+        </span>
+      </div>
+      {rows.length === 0 ? (
+        <p className="px-4 py-8 text-center text-[12.5px] text-faint">
+          이 종목은 아직 프로그램매매 데이터가 없어 손매수를 계산하지 못했어요.
+        </p>
+      ) : (
+        <div className="h-60 px-2 pt-3">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={rows} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+              <CartesianGrid stroke="var(--line)" strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="date" tick={{ fontSize: 11, fill: 'var(--fg-muted)' }} />
+              <YAxis
+                tick={{ fontSize: 11, fill: 'var(--fg-muted)' }}
+                width={64}
+                tickFormatter={(v) => `${nf.format(Math.round(Number(v)))}억`}
+              />
+              <Tooltip
+                formatter={(v, name) => [`${nf.format(Math.round(Number(v ?? 0)))}억`, String(name)]}
+                labelFormatter={(l) => `${l} 손매수`}
+              />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Bar dataKey="foreign" name="외국인" fill="#a3e635" maxBarSize={14} />
+              <Bar dataKey="institution" name="기관" fill="#fb7185" maxBarSize={14} />
+              <Bar dataKey="total" name="합계" fill="#14b8a6" maxBarSize={14} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ProgramPanel({ data }: { data: Payload }) {
   const minute = data.minute ?? [];
   const programDaily = data.programDaily ?? [];

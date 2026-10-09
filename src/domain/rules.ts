@@ -15,7 +15,8 @@
  * flow 조건은 AND 로 결합한다.
  */
 import { query } from '../lib/core';
-import { INVESTOR_LABEL, type InvestorType } from '../providers/investor-flow';
+import { FLOW_LABEL, type HandBuyType } from './handbuy';
+import { type InvestorType } from '../providers/investor-flow';
 import { PATTERN_BY_ID, STAGE_KO, type Direction, type Stage } from './patterns';
 
 /* ───────────────────────── 수급 이벤트 ───────────────────────── */
@@ -65,14 +66,14 @@ export async function computeFlowEvents(fromDate: string, toDate: string): Promi
 
 /* ───────────────────────── 조건 타입 ───────────────────────── */
 
-export type FlowMetric = 'float_pct' | 'amount' | 'turnover_x' | 'qty';
+export type FlowMetric = 'float_pct' | 'amount' | 'turnover_x' | 'qty' | 'z_score' | 'streak';
 /** recent = 기준일부터 과거 windowDays 거래일 / pattern_window = 매칭된 패턴의 시작~종료 구간 */
 export type FlowScope = 'recent' | 'pattern_window';
 /** sum = 구간 합계 / daily_max = 구간 내 하루 최대치 (하루에 몰아서 들어온 것을 잡는다) */
 export type FlowAgg = 'sum' | 'daily_max';
 
 export interface FlowCondition {
-  investorType: InvestorType;
+  investorType: InvestorType | HandBuyType;
   /** buy = 순매수(양수) 기준, sell = 순매도(음수 절대값) 기준 */
   side: 'buy' | 'sell';
   metric: FlowMetric;
@@ -162,7 +163,7 @@ export const DEFAULT_RULE: Omit<Rule, 'date'> = {
 /* ───────────────────────── 결과 타입 ───────────────────────── */
 
 export interface RuleMatchFlow {
-  investorType: InvestorType;
+  investorType: InvestorType | HandBuyType;
   label: string;
   metric: FlowMetric;
   value: number;
@@ -198,6 +199,9 @@ export interface RuleRow {
     barsSinceFormed: number | null;
     /** 돌파봉 거래량 ÷ 직전 20봉 평균. 돌파 전이면 null. */
     breakoutVolumeRatio: number | null;
+    /** 같은 패턴·단계의 과거 10거래일 뒤 승률(%)과 표본 수. 통계가 없으면 null. */
+    histWin: number | null;
+    histN: number | null;
   }>;
   lines: Array<{ signal: string; score: number; detail: Record<string, unknown> }>;
   insiderBuys: number;
@@ -219,6 +223,8 @@ const METRIC_COL: Record<FlowMetric, string> = {
   amount: 'net_buy_amount',
   turnover_x: 'turnover_x',
   qty: 'net_buy_qty',
+  z_score: 'z20',
+  streak: 'streak',
 };
 
 export async function runRule(rule: Rule): Promise<RuleResult> {
@@ -267,9 +273,10 @@ export async function runRule(rule: Rule): Promise<RuleResult> {
     breakout_date: string | null; start_date: string | null; end_date: string | null;
     bars_since_breakout: number | null; bars_since_formed: number | null;
     breakout_volume_ratio: string | null;
+    hist_win: string | null; hist_n: number | null;
   }>(
     `select symbol, pattern, direction, stage, score, pivot_price, distance_pct,
-            bars_since_breakout, bars_since_formed,
+            bars_since_breakout, bars_since_formed, hist_win, hist_n,
             evidence_json->>'breakoutVolumeRatio' breakout_volume_ratio,
             to_char(breakout_date,'YYYY-MM-DD') breakout_date,
             to_char(start_date,'YYYY-MM-DD') start_date,
@@ -374,7 +381,7 @@ export async function runRule(rule: Rule): Promise<RuleResult> {
       const list = flowMatches.get(r.symbol) ?? [];
       list.push({
         investorType: cond.investorType,
-        label: INVESTOR_LABEL[cond.investorType],
+        label: FLOW_LABEL[cond.investorType] ?? cond.investorType,
         metric: cond.metric,
         value: Number(r.v),
         onDate: r.on_date,
@@ -397,16 +404,18 @@ export async function runRule(rule: Rule): Promise<RuleResult> {
         [cond.investorType, windowFrom, rule.date],
       );
       const o = observed[0];
-      const unit = cond.metric === 'float_pct' ? '%' : cond.metric === 'turnover_x' ? '배' : '';
+      const unit =
+        cond.metric === 'float_pct' ? '%' : cond.metric === 'turnover_x' ? '배' : cond.metric === 'z_score' ? 'σ' : cond.metric === 'streak' ? '일' : '';
       const metricKo =
-        cond.metric === 'float_pct' ? '유통주식수 대비' : cond.metric === 'turnover_x' ? '평소 거래량 대비' : '순매수';
+        cond.metric === 'float_pct' ? '유통주식수 대비' : cond.metric === 'turnover_x' ? '평소 거래량 대비'
+        : cond.metric === 'z_score' ? '최근 20일 평균 대비 이탈(표준편차)' : cond.metric === 'streak' ? '연속 순매수' : '순매수';
       // 수급은 앞 조건이 좁힌 후보 안에서만 찾는다. 그 사실을 안 밝히면
       // "사모 0.3% 인 종목이 하나도 없다"로 읽힌다. 실제로는 33종목이 있는데
       // 패턴이 3종목으로 깎아 놓은 탓인데도 원인이 패턴에 있다는 걸 알 수 없다.
       const pool = candidates ? `앞 조건을 통과한 ${candidates.length}종목 안에서 찾았어요. ` : '';
       notes.push(
         pool +
-          `${INVESTOR_LABEL[cond.investorType]} ${metricKo} ${cond.value}${unit} ${cond.op === '>=' ? '이상' : '이하'} 조건에 맞는 종목이 없어요. ` +
+          `${FLOW_LABEL[cond.investorType] ?? cond.investorType} ${metricKo} ${cond.value}${unit} ${cond.op === '>=' ? '이상' : '이하'} 조건에 맞는 종목이 없어요. ` +
           (Number(o?.n ?? 0) === 0
             ? '이 기간에는 해당 투자자 구분의 데이터가 아직 없어요.'
             : `이 기간 실제 최대는 ${o?.mx ?? '-'}${unit}, 상위 1% 선은 ${o?.p99 ?? '-'}${unit}예요.`),
@@ -527,6 +536,8 @@ export async function runRule(rule: Rule): Promise<RuleResult> {
         p.breakout_volume_ratio === null || Number(p.breakout_volume_ratio) <= 0
           ? null
           : Number(p.breakout_volume_ratio),
+      histWin: p.hist_win === null ? null : Number(p.hist_win),
+      histN: p.hist_n,
       startDate: p.start_date,
       endDate: p.end_date,
     })),

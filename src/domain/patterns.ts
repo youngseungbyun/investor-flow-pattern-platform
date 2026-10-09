@@ -53,6 +53,9 @@ export interface PatternHit {
   barsSinceBreakout: number | null;
   /** 구조가 완성된 뒤 지난 거래일 수. */
   barsSinceFormed: number;
+  /** 같은 패턴·단계의 과거 10거래일 뒤 승률(%)과 표본 수. pattern_stats 가 없으면 비어 있다. */
+  histWin?: number | null;
+  histN?: number | null;
   evidence: Evidence;
 }
 
@@ -132,7 +135,7 @@ function avgVolume(bars: Bar[], idx: number, n: number): number {
  * ATR(평균 실체범위). 이 종목에서 "의미 있는 움직임"의 단위를 준다.
  * 고정 퍼센트 임계값을 쓰면 변동성 큰 종목은 전부 통과하고 조용한 종목은 전부 탈락한다.
  */
-function atr(bars: Bar[], n = 14): number {
+export function atr(bars: Bar[], n = 14): number {
   if (bars.length < 2) return 0;
   const trs: number[] = [];
   for (let i = Math.max(1, bars.length - n); i < bars.length; i++) {
@@ -311,7 +314,19 @@ function finish(
   const freshness = Math.pow(0.5, staleBars / 25);
   const stagePenalty = st.stage === 'failed' ? -20 : 0;
 
-  const raw = Math.max(0, baseScore + volBonus + dryBonus + stagePenalty);
+  // 반전형은 "앞선 추세"가 있어야 반전이다. 상승 추세 한가운데 생긴 쌍바닥은 눌림일 뿐이다.
+  // 시작점 직전 60봉의 고점(저점)에서 8% 이상 밀려(올라) 있어야 인정하고, 아니면 감점한다.
+  // 봉이 모자라 판정할 수 없으면 건드리지 않는다.
+  let trendAdj = 0;
+  if (meta?.kind === 'reversal' && startIdx >= 20) {
+    const lo = Math.max(0, startIdx - 60);
+    let ref = bars[startIdx].c;
+    for (let j = lo; j < startIdx; j++) ref = direction === 'bullish' ? Math.max(ref, bars[j].h) : Math.min(ref, bars[j].l);
+    const moved = direction === 'bullish' ? (ref - bars[startIdx].c) / ref : (bars[startIdx].c - ref) / ref;
+    trendAdj = moved >= 0.08 ? 6 : moved >= 0.03 ? 0 : -12;
+  }
+
+  const raw = Math.max(0, baseScore + volBonus + dryBonus + stagePenalty + trendAdj);
   const score = Math.max(0, Math.min(100, round(raw * (0.45 + 0.55 * freshness), 2)));
 
   const lastIdx = bars.length - 1;
@@ -343,6 +358,7 @@ function finish(
       barsSinceBreakout,
       barsSinceFormed,
       formationVolumeRatio: round(dry, 3),
+      trendAdj,
       staleBars,
       freshness: round(freshness, 3),
     },
@@ -692,8 +708,26 @@ function flag(bars: Bar[], bull: boolean): Draft | null {
 
 /* ─────────────────────────── 스캔 ─────────────────────────── */
 
-export function detectAll(symbol: string, bars: Bar[], pivotK = 5): PatternHit[] {
+/**
+ * 피벗 크기(좌우 k봉) 세 가지. 한 가지 크기로만 찾으면 큰 구조와 작은 구조를 함께 못 잡는다.
+ * 같은 구조가 여러 크기에서 잡히면 아래에서 점수 높은 것 하나만 남긴다.
+ */
+export const PIVOT_SCALES = [4, 6, 9];
+
+export function detectAll(symbol: string, bars: Bar[], pivotK?: number): PatternHit[] {
   if (bars.length < 40) return [];
+  const scales = pivotK ? [pivotK] : PIVOT_SCALES;
+  const best = new Map<string, PatternHit>();
+  for (const k of scales) {
+    for (const h of detectAtScale(symbol, bars, k)) {
+      const cur = best.get(h.pattern);
+      if (!cur || h.score > cur.score) best.set(h.pattern, h);
+    }
+  }
+  return dedupeOverlaps([...best.values()]);
+}
+
+function detectAtScale(symbol: string, bars: Bar[], pivotK: number): PatternHit[] {
   const hits: PatternHit[] = [];
 
   const add = (h: Draft | null) => {
@@ -721,7 +755,7 @@ export function detectAll(symbol: string, bars: Bar[], pivotK = 5): PatternHit[]
   }
   try { for (const h of trendlinePatterns(bars, pivotK)) add(h); } catch { /* 무시 */ }
 
-  return dedupeOverlaps(hits);
+  return hits;
 }
 
 /**
@@ -786,6 +820,36 @@ export async function loadBars(symbol: string, asOf: string, limit = 220): Promi
   }));
 }
 
+/**
+ * 여러 종목의 최근 limit 봉을 한 번에 읽는다.
+ * 종목마다 질의하면 DB 까지의 왕복 지연이 종목 수만큼 쌓인다(러너↔Neon 약 200ms × 800).
+ * 윈도 함수로 종목별 최근 limit 봉만 잘라 온다.
+ */
+export async function loadBarsBatch(symbols: string[], asOf: string, limit = 220): Promise<Map<string, Bar[]>> {
+  const out = new Map<string, Bar[]>();
+  if (symbols.length === 0) return out;
+  const rows = await query<{
+    symbol: string; date: string; o: string; h: string; l: string; c: string; volume: string;
+  }>(
+    `select symbol, to_char(date,'YYYY-MM-DD') date, o, h, l, c, volume
+       from (
+         select symbol, date, o, h, l, c, volume,
+                row_number() over (partition by symbol order by date desc) rn
+           from ohlcv_daily
+          where symbol = any($1::text[]) and date <= $2::date and date > ($2::date - 500) and c is not null
+       ) t
+      where rn <= $3
+      order by symbol, date`,
+    [symbols, asOf, limit],
+  );
+  for (const r of rows) {
+    const list = out.get(r.symbol) ?? [];
+    list.push({ date: r.date, o: Number(r.o), h: Number(r.h), l: Number(r.l), c: Number(r.c), volume: Number(r.volume) });
+    out.set(r.symbol, list);
+  }
+  return out;
+}
+
 export async function scanSymbol(symbol: string, asOf: string): Promise<PatternHit[]> {
   return detectAll(symbol, await loadBars(symbol, asOf));
 }
@@ -796,11 +860,11 @@ export async function saveHits(hits: PatternHit[], date: string): Promise<number
     'pattern_hits',
     ['symbol', 'date', 'pattern', 'score', 'evidence_json', 'confirmed',
       'direction', 'kind', 'stage', 'pivot_price', 'breakout_date', 'start_date', 'end_date', 'distance_pct',
-      'bars_since_breakout', 'bars_since_formed'],
+      'bars_since_breakout', 'bars_since_formed', 'hist_win', 'hist_n'],
     hits.map((h) => [
       h.symbol, date, h.pattern, h.score, JSON.stringify(h.evidence), h.confirmed,
       h.direction, h.kind, h.stage, h.pivotPrice, h.breakoutDate, h.startDate, h.endDate, h.distancePct,
-      h.barsSinceBreakout, h.barsSinceFormed,
+      h.barsSinceBreakout, h.barsSinceFormed, h.histWin ?? null, h.histN ?? null,
     ]),
     `on conflict (symbol, date, pattern) do update set
        score = excluded.score,
@@ -815,6 +879,26 @@ export async function saveHits(hits: PatternHit[], date: string): Promise<number
        end_date = excluded.end_date,
        distance_pct = excluded.distance_pct,
        bars_since_breakout = excluded.bars_since_breakout,
-       bars_since_formed = excluded.bars_since_formed`,
+       bars_since_formed = excluded.bars_since_formed,
+       hist_win = excluded.hist_win,
+       hist_n = excluded.hist_n`,
   );
+}
+
+/**
+ * 판정한 패턴에 "같은 패턴·단계의 과거 10거래일 뒤 승률"을 붙인다(pattern_stats 가 있을 때만).
+ * 표본이 30건 미만이면 숫자를 믿기 어려워 붙이지 않는다.
+ */
+export async function attachHistory(hits: PatternHit[]): Promise<void> {
+  const rows = await query<{ pattern: string; stage: string; n: number; win_rate: string }>(
+    `select pattern, stage, n, win_rate from pattern_stats where horizon = 10 and n >= 30`,
+  );
+  const map = new Map(rows.map((r) => [`${r.pattern}|${r.stage}`, r]));
+  for (const h of hits) {
+    const r = map.get(`${h.pattern}|${h.stage}`);
+    if (r) {
+      h.histWin = Number(r.win_rate);
+      h.histN = r.n;
+    }
+  }
 }

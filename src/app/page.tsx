@@ -14,6 +14,8 @@ type Stage = 'forming' | 'near_pivot' | 'breakout' | 'pullback' | 'failed';
 
 interface Catalog {
   investors: Array<{ id: string; ko: string; group: string }>;
+  /** 조건 검색용. 원자료 주체 + 손매수 가상 주체 */
+  flowInvestors?: Array<{ id: string; ko: string }>;
   patterns: Array<{ id: string; ko: string; direction: Direction; kind: string }>;
   stages: Array<{ id: string; ko: string }>;
   lineSignals: Array<{ id: string; ko: string }>;
@@ -49,7 +51,7 @@ interface RuleRow {
   close: number | null; changePct: number | null; tradedValue: number | null;
   floatShares: number | null; floatBasis: 'computed' | 'listed_shares';
   flows: Array<{ label: string; metric: string; value: number; onDate: string | null }>;
-  patterns: Array<{ pattern: string; ko: string; direction: Direction; stage: Stage; stageKo: string; score: number; pivotPrice: number | null; distancePct: number | null; barsSinceBreakout?: number | null; barsSinceFormed?: number | null; breakoutVolumeRatio?: number | null }>;
+  patterns: Array<{ pattern: string; ko: string; direction: Direction; stage: Stage; stageKo: string; score: number; pivotPrice: number | null; distancePct: number | null; barsSinceBreakout?: number | null; barsSinceFormed?: number | null; breakoutVolumeRatio?: number | null; histWin?: number | null; histN?: number | null }>;
   lines: Array<{ signal: string; score: number; detail: Record<string, unknown> }>;
   insiderBuys: number;
   rank: number;
@@ -224,6 +226,7 @@ export default function Dashboard() {
 
       <div className="mx-auto max-w-[1720px] space-y-4 px-5 py-5">
         {loadError ? <LoadError message={loadError} /> : <MarketChart status={status} catalog={catalog} />}
+        {loadError || !date ? null : <HandBuyPanel date={date} />}
         {loadError ? null : !date || !catalog ? (
           <Skeleton />
         ) : (
@@ -479,6 +482,118 @@ function Skeleton() {
 
 /* ══════════════════════ 공용 조각 ══════════════════════ */
 
+interface HandBuyRow {
+  symbol: string; name: string; market: string;
+  amt: string; qty: string; pct: string | null; z: string | null; streak: number | null;
+  close: string | null; chg: string | null; tv: string | null; prog: string | null;
+}
+
+/** 손매수 상위 종목. 프로그램매매를 뺀, 사람이 직접 주문한 순매수(매도)가 큰 종목을 순서대로 보여 준다. */
+function HandBuyPanel({ date }: { date: string }) {
+  const [kind, setKind] = useState<'total' | 'foreign' | 'institution'>('total');
+  const [side, setSide] = useState<'buy' | 'sell'>('buy');
+  const [market, setMarket] = useState<'all' | 'KOSPI' | 'KOSDAQ'>('all');
+  const [data, setData] = useState<{ date: string | null; rows: HandBuyRow[]; notes: string[] } | null>(null);
+
+  useEffect(() => {
+    setData(null);
+    const q = new URLSearchParams({ date, kind, side, limit: '30' });
+    if (market !== 'all') q.set('market', market);
+    fetch(`/api/handbuy?${q}`)
+      .then((r) => r.json())
+      .then((d) => setData({ date: d.date ?? null, rows: d.rows ?? [], notes: d.notes ?? [] }))
+      .catch(() => setData({ date: null, rows: [], notes: ['불러오지 못했어요.'] }));
+  }, [date, kind, side, market]);
+
+  const signCls = (v: number) => (v >= 0 ? 'up' : 'down');
+
+  return (
+    <section className="panel">
+      <div className="panel-head flex-wrap gap-y-2">
+        <div>
+          <h2 className="panel-title">손매수 상위</h2>
+          <p className="panel-desc">
+            외국인·기관 순매수에서 프로그램 순매수를 뺀, 직접 주문으로 산 금액이에요.
+            {data?.date ? ` ${data.date} 기준` : ''}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+          <Segmented
+            label="주체"
+            value={kind}
+            onChange={setKind}
+            options={[{ v: 'total', ko: '합계' }, { v: 'foreign', ko: '외국인' }, { v: 'institution', ko: '기관' }]}
+          />
+          <Segmented
+            label="방향"
+            value={side}
+            onChange={setSide}
+            options={[{ v: 'buy', ko: '순매수' }, { v: 'sell', ko: '순매도' }]}
+          />
+          <Segmented
+            label="시장"
+            value={market}
+            onChange={setMarket}
+            options={[{ v: 'all', ko: '전체' }, { v: 'KOSPI', ko: '코스피' }, { v: 'KOSDAQ', ko: '코스닥' }]}
+          />
+        </div>
+      </div>
+      <div className="panel-body">
+        {data === null ? (
+          <div className="skel h-48 w-full" />
+        ) : data.rows.length === 0 ? (
+          <p className="py-8 text-center text-[12.5px] text-faint">{data.notes[0] ?? '해당하는 종목이 없어요.'}</p>
+        ) : (
+          <div className="-mx-1 overflow-x-auto px-1">
+            <table className="w-full min-w-[640px] text-[12.5px]">
+              <thead>
+                <tr className="text-left text-[11.5px] text-faint">
+                  <th className="py-1.5 pr-2 font-normal">#</th>
+                  <th className="py-1.5 pr-3 font-normal">종목</th>
+                  <th className="py-1.5 pr-3 text-right font-normal">손매수</th>
+                  <th className="py-1.5 pr-3 text-right font-normal">유통주식 대비</th>
+                  <th className="py-1.5 pr-3 text-right font-normal">프로그램</th>
+                  <th className="py-1.5 pr-3 text-right font-normal">종가</th>
+                  <th className="py-1.5 text-right font-normal">등락</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((r, i) => (
+                  <tr key={r.symbol} className="border-t border-line">
+                    <td className="num py-1.5 pr-2 text-faint">{i + 1}</td>
+                    <td className="py-1.5 pr-3">
+                      <Link href={`/stock/${r.symbol}`} className="font-semibold hover:underline">
+                        {r.name}
+                      </Link>
+                      <span className="num ml-1.5 text-faint">{r.symbol}</span>
+                    </td>
+                    <td className={`num py-1.5 pr-3 text-right font-semibold ${signCls(Number(r.amt))}`}>
+                      {won(Number(r.amt))}
+                    </td>
+                    <td className="num py-1.5 pr-3 text-right">
+                      {r.pct == null ? '-' : `${Number(r.pct).toFixed(3)}%`}
+                    </td>
+                    <td className="num py-1.5 pr-3 text-right text-faint">
+                      {r.prog == null ? '-' : won(Number(r.prog))}
+                    </td>
+                    <td className="num py-1.5 pr-3 text-right">{r.close == null ? '-' : nf.format(Number(r.close))}</td>
+                    <td className={`num py-1.5 text-right ${r.chg == null ? '' : signCls(Number(r.chg))}`}>
+                      {r.chg == null ? '-' : `${Number(r.chg) >= 0 ? '+' : ''}${Number(r.chg).toFixed(2)}%`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {data?.notes?.length ? (
+          <p className="mt-2 text-[11.5px] text-faint">{data.notes[data.notes.length - 1]}</p>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 function Chip({
   on, onClick, children, tone, dot,
 }: { on?: boolean; onClick?: () => void; children: React.ReactNode; tone?: string; dot?: string }) {
@@ -575,7 +690,7 @@ function Empty({ children }: { children: React.ReactNode }) {
 
 function PatternTags({
   patterns,
-}: { patterns: Array<{ pattern: string; ko: string; direction: Direction; stage: Stage; stageKo?: string; score: number; breakoutVolumeRatio?: number | null }> }) {
+}: { patterns: Array<{ pattern: string; ko: string; direction: Direction; stage: Stage; stageKo?: string; score: number; breakoutVolumeRatio?: number | null; histWin?: number | null; histN?: number | null }> }) {
   if (!patterns?.length) return <span className="text-faint">-</span>;
   return (
     <div className="flex flex-wrap gap-1">
@@ -593,6 +708,12 @@ function PatternTags({
             </span>
           ) : null}
           <span className="num opacity-60">{Math.round(p.score)}</span>
+          {/* 과거 같은 패턴·단계였던 사례가 10거래일 뒤 올랐던 비율. 표본이 30건 미만이면 안 붙는다. */}
+          {p.histWin != null ? (
+            <span className="num opacity-80" title={`과거 같은 패턴·단계 ${p.histN}건 중 10거래일 뒤 방향이 맞았던 비율`}>
+              승률 {Math.round(p.histWin)}%
+            </span>
+          ) : null}
         </span>
       ))}
       {patterns.length > 3 && <span className="tag tag-mute">+{patterns.length - 3}</span>}
@@ -694,17 +815,22 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
 
   const investorGroups = useMemo(() => {
     const g = new Map<string, Catalog['investors']>();
-    for (const iv of catalog.investors) {
+    const handbuy = (catalog.flowInvestors ?? [])
+      .filter((x) => x.id.startsWith('handbuy_'))
+      .map((x) => ({ ...x, group: '손매수 (프로그램 제외)' }));
+    for (const iv of [...catalog.investors, ...handbuy]) {
       const list = g.get(iv.group) ?? [];
       list.push(iv);
       g.set(iv.group, list);
     }
     return [...g.entries()];
-  }, [catalog.investors]);
+  }, [catalog.investors, catalog.flowInvestors]);
 
-  const metricUnit = (m: string) => (m === 'float_pct' ? '%' : m === 'turnover_x' ? '배' : m === 'amount' ? '원' : '주');
+  const metricUnit = (m: string) =>
+    m === 'float_pct' ? '%' : m === 'turnover_x' ? '배' : m === 'amount' ? '원' : m === 'z_score' ? 'σ' : m === 'streak' ? '일' : '주';
   const fmtFlow = (metric: string, v: number) =>
-    metric === 'float_pct' ? `${v.toFixed(3)}%` : metric === 'turnover_x' ? `${v.toFixed(2)}배` : metric === 'amount' ? won(v) : num(v);
+    metric === 'float_pct' ? `${v.toFixed(3)}%` : metric === 'turnover_x' ? `${v.toFixed(2)}배` : metric === 'amount' ? won(v)
+    : metric === 'z_score' ? `${v.toFixed(1)}σ` : metric === 'streak' ? `${v}일 연속` : num(v);
 
   return (
     <div className="space-y-4">

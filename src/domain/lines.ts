@@ -7,7 +7,7 @@
  * 3) 3일선·5일선에서 지지가 나왔는지 본다. 패턴 조건과는 조건 빌더에서 AND 로 엮는다.
  */
 import { bulkInsert, exec, query } from '../lib/core';
-import { swingHighs, swingLows, type Bar } from './patterns';
+import { atr, swingHighs, swingLows, type Bar } from './patterns';
 
 const round = (x: number, d = 2) => Number(x.toFixed(d));
 const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
@@ -38,32 +38,82 @@ export const SIGNAL_KO: Record<string, string> = {
 
 /* ─────────────────── 1. 변곡점 수평선 추출 ─────────────────── */
 
-/** 가격이 tolPct 이내면 같은 선으로 묶는다. */
-export function detectLines(bars: Bar[], pivotK = 5, tolPct = 1.5): SupportLine[] {
+/** 호가단위. 선 가격을 실제로 체결될 수 있는 가격으로 맞춘다. */
+export function tickSize(price: number): number {
+  if (price < 2000) return 1;
+  if (price < 5000) return 5;
+  if (price < 20000) return 10;
+  if (price < 50000) return 50;
+  if (price < 200000) return 100;
+  if (price < 500000) return 500;
+  return 1000;
+}
+
+/**
+ * 변곡점 수평선.
+ *
+ * 예전에는 가격을 1.5% 고정 폭으로 묶고 터치 횟수와 최근성만 봤다. 그래서
+ *  - 변동성 큰 종목은 같은 가격대인데도 선이 여러 개로 흩어지고
+ *  - 조용한 종목은 서로 다른 가격대가 한 선으로 뭉쳤으며
+ *  - 거래량이 실리지 않은 우연한 터치도 강한 선이 됐다.
+ * 지금은
+ *  1) 묶는 폭을 ATR(평균 진폭)에 비례시킨다(종가의 0.8~3%).
+ *  2) 변곡점마다 그날 거래량이 평소의 몇 배였는지로 가중한다(매물이 쌓인 가격대).
+ *  3) 닿은 뒤 5봉 안에 3% 이상 반대로 움직였는지(반등·되돌림 성공률)를 강도에 넣는다.
+ *  4) 가격은 호가단위로 맞춘다.
+ * strength = 터치(가중) 45 + 최근성 20 + 반등 성공률 25 + 방향 일치 10.
+ */
+export function detectLines(bars: Bar[], pivotK = 5, tolPct?: number): SupportLine[] {
   const last = bars.length - 1;
   if (last < 20) return [];
 
-  const pts: Array<{ i: number; price: number; kind: 'support' | 'resistance' }> = [
-    ...swingLows(bars, pivotK).map((i) => ({ i, price: bars[i].l, kind: 'support' as const })),
-    ...swingHighs(bars, pivotK).map((i) => ({ i, price: bars[i].h, kind: 'resistance' as const })),
+  const close = bars[last].c;
+  const atrPct = close > 0 ? (atr(bars) / close) * 100 : 1.5;
+  const tol = tolPct ?? Math.max(0.8, Math.min(3, atrPct * 0.55));
+
+  type Pt = { i: number; price: number; kind: 'support' | 'resistance'; w: number; bounced: boolean };
+  const volAt = (i: number) => {
+    const from = Math.max(0, i - 20);
+    const seg = bars.slice(from, i).map((b) => b.volume);
+    const mean = avg(seg);
+    return mean > 0 ? Math.max(0.5, Math.min(3, bars[i].volume / mean)) : 1;
+  };
+  const bounced = (i: number, support: boolean) => {
+    const end = Math.min(last, i + 5);
+    if (end <= i) return false;
+    const ref = support ? bars[i].l : bars[i].h;
+    for (let j = i + 1; j <= end; j++) {
+      if (support ? bars[j].h >= ref * 1.03 : bars[j].l <= ref * 0.97) return true;
+    }
+    return false;
+  };
+
+  const pts: Pt[] = [
+    ...swingLows(bars, pivotK).map((i) => ({ i, price: bars[i].l, kind: 'support' as const, w: volAt(i), bounced: bounced(i, true) })),
+    ...swingHighs(bars, pivotK).map((i) => ({ i, price: bars[i].h, kind: 'resistance' as const, w: volAt(i), bounced: bounced(i, false) })),
   ].sort((a, b) => a.price - b.price);
 
-  const clusters: Array<Array<{ i: number; price: number; kind: 'support' | 'resistance' }>> = [];
+  const clusters: Pt[][] = [];
   for (const p of pts) {
     const cur = clusters[clusters.length - 1];
-    if (cur && (Math.abs(p.price - cur[0].price) / cur[0].price) * 100 <= tolPct) cur.push(p);
+    if (cur && (Math.abs(p.price - cur[0].price) / cur[0].price) * 100 <= tol) cur.push(p);
     else clusters.push([p]);
   }
 
-  const close = bars[last].c;
   return clusters
     .filter((c) => c.length >= 2)
     .map((c) => {
-      const price = avg(c.map((p) => p.price));
+      const raw = avg(c.map((p) => p.price));
+      const tick = tickSize(raw);
+      const price = Math.round(raw / tick) * tick;
       const idxs = c.map((p) => p.i).sort((a, b) => a - b);
       const supports = c.filter((p) => p.kind === 'support').length;
       const recency = clamp01((idxs[idxs.length - 1] - (last - 120)) / 120);
-      const strength = round(clamp01(c.length / 5) * 70 + recency * 30, 2);
+      // 거래량 가중 터치 수. 평소 거래량이면 1, 3배면 3 으로 센다.
+      const weighted = c.reduce((a, p) => a + p.w, 0);
+      const bounce = c.filter((p) => p.bounced).length / c.length;
+      const sameSide = Math.max(supports, c.length - supports) / c.length;
+      const strength = round(clamp01(weighted / 7) * 45 + recency * 20 + bounce * 25 + sameSide * 10, 2);
       return {
         lineId: `L${Math.round(price)}`,
         price: round(price),
@@ -71,10 +121,12 @@ export function detectLines(bars: Bar[], pivotK = 5, tolPct = 1.5): SupportLine[
         touches: c.length,
         firstAt: bars[idxs[0]].date,
         lastAt: bars[idxs[idxs.length - 1]].date,
-        strength: supports >= c.length / 2 ? strength : round(strength * 0.9, 2),
+        strength,
       };
     })
     .sort((a, b) => b.strength - a.strength)
+    // 호가단위로 맞추면 다른 묶음이 같은 가격이 될 수 있다. 같은 id 는 강한 쪽 하나만(PK 충돌 방지).
+    .filter((l, i, arr) => arr.findIndex((x) => x.lineId === l.lineId) === i)
     .slice(0, 12);
 }
 
@@ -241,6 +293,22 @@ export async function saveLines(symbol: string, date: string, lines: SupportLine
     'support_lines',
     ['symbol', 'date', 'line_id', 'price', 'kind', 'touches', 'first_at', 'last_at', 'strength'],
     lines.map((l) => [symbol, date, l.lineId, l.price, l.kind, l.touches, l.firstAt, l.lastAt, l.strength]),
+    `on conflict (symbol, date, line_id) do update set
+       price = excluded.price, kind = excluded.kind, touches = excluded.touches,
+       first_at = excluded.first_at, last_at = excluded.last_at, strength = excluded.strength`,
+  );
+}
+
+/** 전 종목의 선을 한 번에 넣는다. 종목마다 저장하면 왕복이 종목 수만큼 쌓인다. */
+export async function saveLinesBatch(date: string, perSymbol: Array<[string, SupportLine[]]>): Promise<number> {
+  const rows = perSymbol.flatMap(([symbol, lines]) =>
+    lines.map((l) => [symbol, date, l.lineId, l.price, l.kind, l.touches, l.firstAt, l.lastAt, l.strength]),
+  );
+  if (!rows.length) return 0;
+  return bulkInsert(
+    'support_lines',
+    ['symbol', 'date', 'line_id', 'price', 'kind', 'touches', 'first_at', 'last_at', 'strength'],
+    rows,
     `on conflict (symbol, date, line_id) do update set
        price = excluded.price, kind = excluded.kind, touches = excluded.touches,
        first_at = excluded.first_at, last_at = excluded.last_at, strength = excluded.strength`,

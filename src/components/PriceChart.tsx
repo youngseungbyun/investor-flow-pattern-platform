@@ -73,6 +73,10 @@ export const INVESTOR_COLOR: Record<string, string> = {
   other_finance: '#a8a29e',
   other_corp: '#e7e5e4',
   other_foreign: '#38bdf8',
+  // 손매수(프로그램 제외) 가상 주체
+  handbuy_total: '#14b8a6',
+  handbuy_foreign: '#a3e635',
+  handbuy_institution: '#fb7185',
 };
 const colorOf = (id: string) => INVESTOR_COLOR[id] ?? '#cbd5e1';
 
@@ -275,6 +279,10 @@ export interface FlowMarker {
   investor_type: string;
   net_buy_qty: string | number;
   float_ratio_pct: string | number | null;
+  /** 직전 20일 평균 대비 이탈(σ). 표본이 모자라면 비어 있다. */
+  z20?: string | number | null;
+  /** 연속 순매수(+)·순매도(-) 일수 */
+  streak?: number | null;
 }
 
 /** 마커 위에 올렸을 때 펼쳐 보여 줄 내역. */
@@ -283,7 +291,7 @@ interface MarkerDetail {
   time: string;
   /** 수급이면 고른 주체의 합계 %, 패턴이면 없음 */
   sum?: number;
-  rows: Array<{ id?: string; label: string; pct: number; qty: number }>;
+  rows: Array<{ id?: string; label: string; pct: number; qty: number; z?: number | null; streak?: number | null }>;
   /** 패턴 골격 점의 이름 */
   note?: string;
 }
@@ -368,25 +376,28 @@ export default function PriceChart({
    * 큰 순으로 최대 4개까지 둔다. 주봉·월봉은 그 구간 안 같은 주체를 합쳐 한 점으로 만든다.
    */
   const flowByBar = useMemo(() => {
-    const out = new Map<string, Array<{ id: string; pct: number; qty: number }>>();
+    const out = new Map<string, Array<{ id: string; pct: number; qty: number; z: number | null; streak: number | null }>>();
     if (!showFlow) return out;
     const pickSet = new Set(picked);
-    const acc = new Map<string, Map<string, { pct: number; qty: number }>>();
+    const acc = new Map<string, Map<string, { pct: number; qty: number; z: number | null; streak: number | null }>>();
     for (const f of flowMarkers) {
       if (!pickSet.has(f.investor_type)) continue;
       const time = view.at.get(f.date);
       const pct = Number(f.float_ratio_pct ?? 0);
       if (!time || !Number.isFinite(pct) || pct === 0) continue;
       const m = acc.get(time) ?? new Map();
-      const prev = m.get(f.investor_type) ?? { pct: 0, qty: 0 };
+      const prev = m.get(f.investor_type) ?? { pct: 0, qty: 0, z: null, streak: null };
       prev.pct += pct;
       prev.qty += Number(f.net_buy_qty ?? 0);
+      // z·연속일수는 합칠 수 없다. 일봉이면 그날 값, 주·월봉이면 구간의 마지막 값을 둔다.
+      prev.z = f.z20 == null ? prev.z : Number(f.z20);
+      prev.streak = f.streak ?? prev.streak;
       m.set(f.investor_type, prev);
       acc.set(time, m);
     }
     for (const [time, m] of acc) {
       const rows = [...m.entries()]
-        .map(([id, r]) => ({ id, pct: r.pct, qty: r.qty }))
+        .map(([id, r]) => ({ id, pct: r.pct, qty: r.qty, z: r.z, streak: r.streak }))
         .filter((r) => Math.abs(r.pct) >= flowMin)
         .sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct))
         .slice(0, 4);
@@ -585,6 +596,8 @@ export default function PriceChart({
               label: investorLabelsRef.current[r.id] ?? r.id,
               pct: r.pct,
               qty: r.qty,
+              z: r.z,
+              streak: r.streak,
             })),
           };
         }
@@ -996,15 +1009,15 @@ export default function PriceChart({
         />
         {hover && (
           <div
-            className="pointer-events-none absolute z-20 w-[214px] overflow-hidden rounded-[var(--r-field)] bg-surface shadow-[0_10px_28px_rgb(0_0_0/0.38)]"
+            className="pointer-events-none absolute z-20 w-[262px] overflow-hidden rounded-[var(--r-field)] bg-surface shadow-[0_10px_28px_rgb(0_0_0/0.38)]"
             style={{
               // 커서 오른쪽이 기본, 오른쪽 끝에 닿으면 왼쪽으로 뒤집는다.
               // 좁은 화면에서는 어느 쪽으로 펴도 넘치므로 가로 범위 안으로 가둔다.
               left: Math.max(
                 4,
                 Math.min(
-                  hover.x > (hostRef.current?.clientWidth ?? 600) / 2 ? hover.x - 228 : hover.x + 14,
-                  (hostRef.current?.clientWidth ?? 600) - 218,
+                  hover.x > (hostRef.current?.clientWidth ?? 600) / 2 ? hover.x - 276 : hover.x + 14,
+                  (hostRef.current?.clientWidth ?? 600) - 266,
                 ),
               ),
               top: Math.max(8, hover.y - 12),
@@ -1045,6 +1058,13 @@ export default function PriceChart({
                       <span className="num w-[68px] shrink-0 text-right text-faint">
                         {nf.format(Math.round(r.qty))}주
                       </span>
+                      {/* 그 종목 평소(20일) 대비 얼마나 큰 날인지, 며칠째 이어지는지 */}
+                      {(r.z != null || (r.streak != null && Math.abs(r.streak) >= 2)) && (
+                        <span className="num shrink-0 text-[10.5px] text-faint">
+                          {r.z != null ? `${r.z >= 0 ? '+' : ''}${r.z.toFixed(1)}σ` : ''}
+                          {r.streak != null && Math.abs(r.streak) >= 2 ? ` ${Math.abs(r.streak)}일째` : ''}
+                        </span>
+                      )}
                     </li>
                   ))}
                   {hover.d.rows.length > 6 && (

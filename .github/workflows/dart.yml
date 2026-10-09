@@ -1,0 +1,39 @@
+name: 공시 수집 (야간)
+
+# 공시(유통주식수 실계산 · 임원 매매)는 당일 분석과 무관한데 12분 넘게 걸려
+# 장 마감 후 수집(collect.yml)의 절반을 차지했다. 밤에 따로 돌린다.
+# 하루 300종목씩 유통주식수를 실계산해 상장주식수 대체 종목을 줄여 간다.
+on:
+  schedule:
+    # 21:30 KST 평일
+    - cron: '30 12 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: '이번에 처리할 종목 수'
+        required: false
+        default: '300'
+
+concurrency:
+  group: dart
+  cancel-in-progress: false
+
+jobs:
+  dart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      OPEN_DART_API_KEY: ${{ secrets.OPEN_DART_API_KEY }}
+      DATA_GO_KR_API_KEY: ${{ secrets.DATA_GO_KR_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm install --no-audit --no-fund
+      - name: 스키마 확인
+        run: npm run db:migrate
+      - name: 공시 (유통주식수·임원 매매)
+        run: npm run batch -- dart --date "$(TZ=Asia/Seoul date +%F)" --dartLimit ${{ github.event.inputs.limit || 300 }}

@@ -7,6 +7,7 @@
  *
  * 모든 단계는 멱등이다. 같은 날짜로 두 번 돌려도 중복 행이 생기지 않는다.
  */
+import { mapPool } from '../src/lib/pool';
 import { addDays, bulkInsert, candidateDays, errMessage, logStep, pool, query, todayKst } from '../src/lib/core';
 import { ingestDay } from '../src/providers/ohlcv';
 import {
@@ -16,7 +17,7 @@ import {
   type InvestorFlowProvider,
   type InvestorType,
 } from '../src/providers/investor-flow';
-import { detectAll, loadBars, saveHits, type PatternHit } from '../src/domain/patterns';
+import { attachHistory, detectAll, loadBarsBatch, saveHits, type PatternHit } from '../src/domain/patterns';
 import {
   availablePeriods,
   runScreener,
@@ -33,6 +34,7 @@ import {
   syncInsiderReports,
 } from '../src/providers/dart';
 import {
+  KIS_CONCURRENCY,
   fetchDailyBars,
   fetchProgramDaily,
   fetchProgramMinute,
@@ -47,7 +49,8 @@ import {
   type MinuteInterval,
 } from '../src/providers/minute';
 import { computeFlowEvents } from '../src/domain/rules';
-import { clearLineScan, saveLines, saveSignals, scanLines } from '../src/domain/lines';
+import { computeHandBuy } from '../src/domain/handbuy';
+import { clearLineScan, saveLinesBatch, saveSignals, scanLines } from '../src/domain/lines';
 
 function arg(name: string, dflt?: string): string | undefined {
   const hit = process.argv.find((a) => a === `--${name}` || a.startsWith(`--${name}=`));
@@ -68,25 +71,43 @@ async function stepOhlcvKis(dateIso: string, days: number) {
   console.log(`[batch] cmd=ohlcv-kis 기준일=${dateIso} 대상일수=${days}`);
   const from = addDays(dateIso, -Math.max(days, 1) * 2);
 
-  // 이미 채워진 날짜는 건너뛴다.
+  // 이미 있는 (종목, 날짜)는 건너뛴다. 날짜 단위로 건너뛰면 상위 종목만 채워진 반쯤 찬 날이
+  // "이미 있음"으로 취급돼 나머지 종목이 영영 안 채워진다. 금융위 정식본도 덮어쓰지 않는다.
   const have = new Set(
     (
-      await query<{ d: string }>(
-        `select to_char(date,'YYYY-MM-DD') d from ohlcv_daily
-          where date between $1 and $2 group by date having count(*) > 100`,
+      await query<{ k: string }>(
+        `select symbol || '|' || to_char(date,'YYYY-MM-DD') k from ohlcv_daily where date between $1 and $2`,
         [from, dateIso],
       )
-    ).map((r) => r.d),
+    ).map((r) => r.k),
   );
 
   const lastFilled =
     (await query<{ d: string }>(`select to_char(max(date),'YYYY-MM-DD') d from ohlcv_daily`))[0]?.d ?? dateIso;
-  const { symbols } = await universe(lastFilled);
+  // 거래대금 상위(유니버스)만 채우면 그날 봉이 전체의 30% 라 "완전한 날" 기준(70%)을 못 넘고
+  // 분석 기준일이 어제로 남았다. 기본은 그 날 있던 전 종목을 채운다. --universe 로 예전처럼 좁힐 수 있다.
+  const onlyUniverse = process.argv.includes('--universe');
+  const symbols = onlyUniverse
+    ? (await universe(lastFilled)).symbols
+    : (
+        await query<{ symbol: string }>(
+          // 가장 최근 날은 반쯤 찬 날일 수 있어(KIS 가 상위만 채운 날) 거기서 종목을 뽑으면 그대로 반쪽이다.
+          // 최근 15일 중 봉이 가장 많았던 날의 종목을 전 종목으로 본다.
+          `select symbol from ohlcv_daily
+            where date = (select date from ohlcv_daily
+                           where date between $1::date - 15 and $1::date
+                           group by date order by count(*) desc, date desc limit 1)
+            order by symbol`,
+          [dateIso],
+        )
+      ).map((r) => r.symbol);
   if (symbols.length === 0) {
     console.log('  유니버스가 비어 있습니다. 먼저 ohlcv 를 한 번 받아 주세요.');
     return;
   }
-  console.log(`  대상 ${symbols.length}종목(${lastFilled} 거래대금 상위) · 이미 있는 날짜 ${[...have].join(', ') || '없음'}`);
+  console.log(
+    `  대상 ${symbols.length}종목(${onlyUniverse ? `${lastFilled} 거래대금 상위` : '최근 15일 중 가장 완전한 날 기준 전 종목'}) · 이미 있는 봉 ${have.size}개`,
+  );
 
   // 장이 끝나지 않은 세션의 봉은 받으면 안 된다. KIS 는 개장 전에도 당일 행을
   // 내주는데 거래량 0 의 빈 봉이라, 넣으면 패턴·지지선 판정이 통째로 오염된다.
@@ -97,31 +118,40 @@ async function stepOhlcvKis(dateIso: string, days: number) {
 
   const rows: Array<[string, string, number, number, number, number, number, number]> = [];
   const dateSet = new Set<string>();
-  let done = 0;
   let failed = 0;
   let streak = 0;
+  let abort: Error | null = null;
 
-  for (const symbol of symbols) {
-    try {
-      const bars = await fetchDailyBars(symbol, from, dateIso);
-      for (const b of bars) {
-        if (have.has(b.date)) continue;
-        if (!acceptable(b.date)) continue;
-        // 거래량 0 은 휴장·미체결이거나 아직 안 끝난 세션이다.
-        if (!(b.volume > 0)) continue;
-        dateSet.add(b.date);
-        rows.push([symbol, b.date, b.o, b.h, b.l, b.c, b.volume, b.tradedValue]);
+  // 종목당 1건이라 겹쳐 보낸다. 한도는 KIS gate() 가 전역으로 지킨다.
+  await mapPool(
+    symbols,
+    KIS_CONCURRENCY,
+    async (symbol) => {
+      if (abort) return;
+      try {
+        const bars = await fetchDailyBars(symbol, from, dateIso);
+        for (const b of bars) {
+          if (have.has(`${symbol}|${b.date}`)) continue;
+          if (!acceptable(b.date)) continue;
+          // 거래량 0 은 휴장·미체결이거나 아직 안 끝난 세션이다.
+          if (!(b.volume > 0)) continue;
+          dateSet.add(b.date);
+          rows.push([symbol, b.date, b.o, b.h, b.l, b.c, b.volume, b.tradedValue]);
+        }
+        streak = 0;
+      } catch (e) {
+        // 개별 종목 실패는 건너뛰되, 첫 오류는 남기고 연속 실패면 멈춘다.
+        // 2026-09-28: 러너에서 종목당 10초씩 조용히 실패해 70분을 태우고 취소됐다.
+        failed++;
+        if (failed === 1) console.log(`  첫 실패 [${symbol}]: ${errMessage(e)}`);
+        if (++streak >= 15) abort = new Error(`KIS 일봉이 연속 ${streak}종목 실패해 중단합니다: ${errMessage(e)}`);
       }
-      streak = 0;
-    } catch (e) {
-      // 개별 종목 실패는 건너뛰되, 첫 오류는 남기고 연속 실패면 멈춘다.
-      // 2026-09-28: 러너에서 종목당 10초씩 조용히 실패해 70분을 태우고 취소됐다.
-      failed++;
-      if (failed === 1) console.log(`  첫 실패 [${symbol}]: ${errMessage(e)}`);
-      if (++streak >= 15) throw new Error(`KIS 일봉이 연속 ${streak}종목 실패해 중단합니다: ${errMessage(e)}`);
-    }
-    if (++done % 100 === 0) console.log(`  ${done}/${symbols.length}종목 · 누적 ${rows.length}행 · 실패 ${failed}`);
-  }
+    },
+    (done) => {
+      if (done % 400 === 0) console.log(`  ${done}/${symbols.length}종목 · 누적 ${rows.length}행 · 실패 ${failed}`);
+    },
+  );
+  if (abort) throw abort;
 
   if (rows.length === 0) {
     console.log('  채울 일봉이 없습니다(이미 있거나 KIS 에도 없음).');
@@ -260,16 +290,18 @@ async function stepFlow(date: string, lookbackDays: number) {
 async function stepPatterns(date: string) {
   const u = await universe(date);
   console.log(`  패턴 스캔 대상 ${u.symbols.length}종목 (거래대금 상위, 전체 ${u.total})`);
-  let scanned = 0;
   let hits: PatternHit[] = [];
+  // 종목마다 DB 를 왕복하면 지연이 그대로 쌓인다(800종목 × 왕복). 한 번에 읽어 메모리에서 계산한다.
+  const barsBy = await loadBarsBatch(u.symbols, date);
+  let scanned = 0;
   for (const symbol of u.symbols) {
-    const bars = await loadBars(symbol, date);
-    const found = detectAll(symbol, bars);
+    const found = detectAll(symbol, barsBy.get(symbol) ?? []);
     if (found.length) hits = hits.concat(found);
     if (++scanned % 200 === 0) console.log(`    ${scanned}/${u.symbols.length} 스캔, 후보 ${hits.length}`);
   }
   // 같은 날짜로 다시 돌리면 이전 결과를 지우고 새로 넣어 중복·잔재를 막는다.
   await exec(`delete from pattern_hits where date = $1`, [date]);
+  await attachHistory(hits);
   const saved = await saveHits(hits, date);
   const confirmed = hits.filter((h) => h.confirmed).length;
   console.log(`패턴 스캔 완료 — 후보 ${saved}건 (확정 돌파 ${confirmed}건)`);
@@ -415,15 +447,22 @@ async function stepProgram(date: string) {
   console.log(`  프로그램매매(일별) 대상 ${symbols.length}종목 (유니버스 ${u.symbols.length})`);
 
   let saved = 0;
-  let done = 0;
-  for (const symbol of symbols) {
-    try {
-      saved += await saveProgramDaily(await fetchProgramDaily(symbol, date));
-    } catch {
-      /* 개별 실패는 건너뛴다 */
-    }
-    if (++done % 40 === 0) console.log(`    ${done}/${symbols.length} · 누적 ${saved}행`);
-  }
+  let failedCalls = 0;
+  await mapPool(
+    symbols,
+    KIS_CONCURRENCY,
+    async (symbol) => {
+      try {
+        saved += await saveProgramDaily(await fetchProgramDaily(symbol, date));
+      } catch {
+        failedCalls++; // 개별 실패는 건너뛴다
+      }
+    },
+    (done) => {
+      if (done % 200 === 0) console.log(`    ${done}/${symbols.length} · 누적 ${saved}행`);
+    },
+  );
+  if (failedCalls > 0) console.log(`  호출 실패 ${failedCalls}종목`);
   console.log(`프로그램매매 수집 완료 — ${saved}행`);
   await logStep(date, 'program', saved > 0 ? 'ok' : 'partial', saved, `symbols=${symbols.length}`, 'kis');
 }
@@ -433,6 +472,9 @@ async function stepFlowEvents(date: string, lookbackDays: number) {
   const from = addDays(date, -lookbackDays);
   const n = await computeFlowEvents(from, date);
   console.log(`수급 이벤트 정규화 완료 — ${from} ~ ${date} 구간 ${n}행`);
+  // 손매수 = (외국인+기관 순매수) − 프로그램 순매수. 프로그램 데이터가 있는 종목·날짜만 계산된다.
+  const hb = await computeHandBuy(from, date);
+  console.log(`손매수 계산 완료 — ${hb}행 (프로그램매매가 있는 종목·날짜)`);
   await logStep(date, 'flow_events', 'ok', n, null, 'internal');
 }
 
@@ -442,16 +484,19 @@ async function stepLines(date: string) {
   console.log(`  라인 스캔 대상 ${u.symbols.length}종목 (거래대금 상위, 전체 ${u.total})`);
   await clearLineScan(date);
 
-  let lineCount = 0;
-  let signalCount = 0;
+  const barsBy = await loadBarsBatch(u.symbols, date);
+  const allLines: Array<[string, Awaited<ReturnType<typeof scanLines>>['lines']]> = [];
+  const allSignals: Awaited<ReturnType<typeof scanLines>>['signals'] = [];
   let scanned = 0;
   for (const symbol of u.symbols) {
-    const bars = await loadBars(symbol, date);
-    const res = scanLines(symbol, bars);
-    lineCount += await saveLines(symbol, date, res.lines);
-    signalCount += await saveSignals(res.signals, date);
+    const res = scanLines(symbol, barsBy.get(symbol) ?? []);
+    allLines.push([symbol, res.lines]);
+    allSignals.push(...res.signals);
     if (++scanned % 200 === 0) console.log(`    ${scanned}/${u.symbols.length} 스캔`);
   }
+  // 저장도 종목마다 하지 않고 한 번에 모아 넣는다.
+  const lineCount = await saveLinesBatch(date, allLines);
+  const signalCount = await saveSignals(allSignals, date);
   console.log(`라인 스캔 완료 — 지지선 ${lineCount}개 / 시그널 ${signalCount}건`);
   await logStep(date, 'lines', 'ok', signalCount, `lines=${lineCount}`, 'internal');
 }
