@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { MagnifyingGlass, Moon, Plus, Sun, X } from '@phosphor-icons/react/dist/ssr';
-import { Area, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import NumberTicker from '@/components/NumberTicker';
 import SymbolSearch from '@/components/SymbolSearch';
 
@@ -283,7 +283,8 @@ function MarketChart({ status, catalog }: { status: Status | null; catalog: Cata
 
   const koLabel = (id: string) => catalog?.investors.find((x) => x.id === id)?.ko ?? id;
   const toggle = (id: string) =>
-    setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : p.length >= 6 ? p : [...p, id]));
+    setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  const allIds = (catalog?.investors ?? []).map((x) => x.id);
 
   const n = (k: string) => Number(status?.counts?.[k] ?? 0);
 
@@ -325,7 +326,12 @@ function MarketChart({ status, catalog }: { status: Status | null; catalog: Cata
               {iv.ko}
             </Chip>
           ))}
-          <span className="ml-1 text-[11.5px] text-faint">최대 6개</span>
+          <Chip on={allIds.length > 0 && picked.length === allIds.length} onClick={() => setPicked(allIds)}>
+            전체
+          </Chip>
+          <Chip on={false} onClick={() => setPicked([])}>
+            해제
+          </Chip>
         </div>
 
         <div className="h-[320px]">
@@ -365,14 +371,22 @@ function MarketChart({ status, catalog }: { status: Status | null; catalog: Cata
                   formatter={(value) => (String(value) === 'kospi' ? '시장 지수' : koLabel(String(value)))}
                   wrapperStyle={{ fontSize: 11.5, color: 'var(--fg-2)' }}
                 />
-                {picked.map((t) => (
-                  <Area
-                    key={t} yAxisId="flow" type="monotone" dataKey={t}
-                    stroke={FLOW_COLOR[t] ?? 'var(--fg-2)'} strokeWidth={1.6}
-                    fill={FLOW_COLOR[t] ?? 'var(--fg-2)'} fillOpacity={0.08}
-                    dot={false} activeDot={{ r: 3 }} isAnimationActive={false}
-                  />
-                ))}
+                {/* 누적은 흐름을 보는 것이라 선, 일별은 그날 크기를 비교하는 것이라 막대. */}
+                {picked.map((t) =>
+                  cum ? (
+                    <Line
+                      key={t} yAxisId="flow" type="monotone" dataKey={t}
+                      stroke={FLOW_COLOR[t] ?? 'var(--fg-2)'} strokeWidth={1.8}
+                      dot={false} activeDot={{ r: 3 }} isAnimationActive={false}
+                    />
+                  ) : (
+                    <Bar
+                      key={t} yAxisId="flow" dataKey={t}
+                      fill={FLOW_COLOR[t] ?? 'var(--fg-2)'} fillOpacity={0.9}
+                      maxBarSize={14} isAnimationActive={false}
+                    />
+                  ),
+                )}
                 <Line
                   yAxisId="idx" type="monotone" dataKey="kospi"
                   stroke="var(--fg)" strokeWidth={1.4} strokeDasharray="4 3"
