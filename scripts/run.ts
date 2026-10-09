@@ -318,7 +318,11 @@ async function stepDart(date: string) {
   const year = arg('bsnsYear') ?? String(Number(date.slice(0, 4)) - 1);
 
   console.log('  corp_code 매핑 동기화...');
-  const mapped = await syncCorpCodes();
+  // 점검 중이면 이미 있는 매핑으로 계속한다. 매핑은 거의 바뀌지 않는다.
+  const mapped = await syncCorpCodes().catch((e) => {
+    console.log(`  corp_code 동기화를 건너뜁니다: ${errMessage(e)}`);
+    return 0;
+  });
   console.log(`  corp_code 갱신 ${mapped}종목`);
 
   // 대상: 최근 스크리너 후보(기간·일별 모두) 우선, 부족하면 거래대금 상위로 채움

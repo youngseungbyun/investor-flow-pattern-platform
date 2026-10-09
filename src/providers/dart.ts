@@ -22,6 +22,12 @@ const API = 'https://opendart.fss.or.kr/api';
 
 export async function syncCorpCodes(): Promise<number> {
   const buf = await fetchBuffer(`${API}/corpCode.xml?crtfc_key=${env.openDartKey}`);
+  // 점검·키 오류일 때 DART 는 zip 이 아니라 <status>·<message> XML 을 200 으로 준다.
+  // 그대로 zip 으로 열면 "No END header found" 같은 알아볼 수 없는 오류가 된다.
+  if (buf.length < 4 || buf[0] !== 0x50 || buf[1] !== 0x4b) {
+    const msg = buf.toString('utf8').match(/<message>([^<]*)<\/message>/)?.[1]?.trim();
+    throw new Error(`DART corpCode 응답이 zip 이 아닙니다: ${msg ?? buf.toString('utf8').slice(0, 80)}`);
+  }
   const entry = new AdmZip(buf).getEntries().find((e) => e.entryName.endsWith('.xml'));
   if (!entry) throw new Error('corpCode.xml 을 zip 에서 찾지 못했습니다.');
 

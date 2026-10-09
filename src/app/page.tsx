@@ -517,7 +517,7 @@ function HandBuyPanel({ date }: { date: string }) {
             {data?.date ? ` ${data.date} 기준` : ''}
           </p>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <Segmented
             label="주체"
             value={kind}
@@ -545,14 +545,14 @@ function HandBuyPanel({ date }: { date: string }) {
           <p className="py-8 text-center text-[12.5px] text-faint">{data.notes[0] ?? '해당하는 종목이 없어요.'}</p>
         ) : (
           <div className="-mx-1 overflow-x-auto px-1">
-            <table className="w-full min-w-[640px] text-[12.5px]">
+            <table className="w-full text-[12.5px]">
               <thead>
                 <tr className="text-left text-[11.5px] text-faint">
                   <th className="py-1.5 pr-2 font-normal">#</th>
                   <th className="py-1.5 pr-3 font-normal">종목</th>
                   <th className="py-1.5 pr-3 text-right font-normal">손매수</th>
-                  <th className="py-1.5 pr-3 text-right font-normal">유통주식 대비</th>
-                  <th className="py-1.5 pr-3 text-right font-normal">프로그램</th>
+                  <th className="hidden py-1.5 pr-3 text-right font-normal sm:table-cell">유통주식 대비</th>
+                  <th className="hidden py-1.5 pr-3 text-right font-normal sm:table-cell">프로그램</th>
                   <th className="py-1.5 pr-3 text-right font-normal">종가</th>
                   <th className="py-1.5 text-right font-normal">등락</th>
                 </tr>
@@ -570,10 +570,10 @@ function HandBuyPanel({ date }: { date: string }) {
                     <td className={`num py-1.5 pr-3 text-right font-semibold ${signCls(Number(r.amt))}`}>
                       {won(Number(r.amt))}
                     </td>
-                    <td className="num py-1.5 pr-3 text-right">
+                    <td className="num hidden py-1.5 pr-3 text-right sm:table-cell">
                       {r.pct == null ? '-' : `${Number(r.pct).toFixed(3)}%`}
                     </td>
-                    <td className="num py-1.5 pr-3 text-right text-faint">
+                    <td className="num hidden py-1.5 pr-3 text-right text-faint sm:table-cell">
                       {r.prog == null ? '-' : won(Number(r.prog))}
                     </td>
                     <td className="num py-1.5 pr-3 text-right">{r.close == null ? '-' : nf.format(Number(r.close))}</td>
