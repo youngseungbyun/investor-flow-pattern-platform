@@ -35,5 +35,11 @@ jobs:
       - run: npm install --no-audit --no-fund
       - name: 스키마 확인
         run: npm run db:migrate
+      # 대상 종목은 "그 날 일봉이 있는 종목"에서 뽑으므로 휴장일·주말의 오늘 날짜로 돌리면 0종목이 된다
+      # (2026-10-10 토요일 시험에서 확인). 일봉이 채워진 가장 최근 날을 기준일로 쓴다.
+      - name: 기준일 결정
+        id: d
+        run: echo "date=$(npx tsx scripts/last-bar-day.ts)" >> "$GITHUB_OUTPUT"
+
       - name: 공시 (유통주식수·임원 매매)
-        run: npm run batch -- dart --date "$(TZ=Asia/Seoul date +%F)" --dartLimit ${{ github.event.inputs.limit || 300 }}
+        run: npm run batch -- dart --date ${{ steps.d.outputs.date }} --dartLimit ${{ github.event.inputs.limit || 300 }}
