@@ -42,4 +42,4 @@ jobs:
         run: echo "date=$(npx tsx scripts/last-bar-day.ts)" >> "$GITHUB_OUTPUT"
 
       - name: 공시 (유통주식수·임원 매매)
-        run: npm run batch -- dart --date ${{ steps.d.outputs.date }} --dartLimit ${{ github.event.inputs.limit || 300 }}
+        run: npm run batch -- dart --date ${{ steps.d.outputs.date }} --dartLimit ${{ github.event.inputs.limit || 150 }}
