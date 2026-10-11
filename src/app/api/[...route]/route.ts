@@ -222,7 +222,13 @@ async function statusPayload() {
     `select to_char(date,'YYYY-MM-DD') date, step, status, row_count, error, provider,
             to_char(ran_at, 'YYYY-MM-DD HH24:MI') ran_at
        from batch_runs
-      where date = (select max(date) from batch_runs)
+      -- 주말·휴장일에도 수집 워크플로우가 돌아 "수급 대기·프로그램 일부"가 찍힌다.
+      -- 장이 열린 날의 실행만 상태로 보여 준다(열린 날이 하나도 없으면 가장 최근 실행).
+      where date = coalesce(
+              (select max(b.date) from batch_runs b
+                 join trading_days t on t.date = b.date and t.is_open
+                where extract(dow from b.date) not in (0, 6)),
+              (select max(date) from batch_runs))
       order by step`,
   );
   const counts = await query(
