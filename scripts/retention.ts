@@ -126,6 +126,19 @@ async function main() {
     }
     console.log('빈 공간 회수 완료');
   }
+
+  // 주 1회(--full, 토요일 백테스트 워크플로우)는 vacuum full 로 파일을 실제로 줄인다.
+  // 잠금이 걸리지만 주말 밤이라 영향이 없다. 2026-10-11 이 작업으로 475MB → 286MB 가 됐다.
+  if (!dry && process.argv.includes('--full')) {
+    for (const t of ['ohlcv_daily', 'flow_events', 'investor_flow_daily', 'pattern_hits', 'insider_reports']) {
+      try {
+        await exec(`vacuum full ${t}`);
+      } catch (e) {
+        console.log(`  vacuum full ${t} 건너뜀: ${e instanceof Error ? e.message : e}`);
+      }
+    }
+    console.log('vacuum full 완료');
+  }
 }
 
 main()
