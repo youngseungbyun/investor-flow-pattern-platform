@@ -98,33 +98,39 @@ export async function syncInsiderReports(corpCode: string, symbol: string): Prom
   if (json.status === '013') return 0; // 조회된 데이터 없음
   if (json.status !== '000') throw new Error(`OpenDART elestock ${json.status}: ${json.message}`);
 
-  let n = 0;
-  for (const r of json.list ?? []) {
-    n += await exec(
-      `insert into insider_reports
-         (rcept_no, corp_code, symbol, corp_name, disclosed_at, reporter, registered, position,
-          main_holder, after_qty, change_qty)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-       on conflict (rcept_no) do update set
-         symbol = excluded.symbol,
-         change_qty = excluded.change_qty,
-         after_qty = excluded.after_qty`,
-      [
-        r.rcept_no,
-        corpCode,
-        symbol,
-        r.corp_name,
-        r.rcept_dt,
-        r.repror,
-        r.isu_exctv_rgist_at,
-        r.isu_exctv_ofcps,
-        r.isu_main_shrholdr,
-        parseNum(r.sp_stock_lmp_cnt),
-        parseNum(r.sp_stock_lmp_irds_cnt),
-      ],
-    );
-  }
-  return n;
+  // 보고서 수백 건을 한 건씩 넣으면 원격 DB 왕복만으로 종목당 수십 초가 든다(2026-10-10 150종목 35분).
+  // 배열로 한 번에 넣는다.
+  const rows = json.list ?? [];
+  if (rows.length === 0) return 0;
+  const uniq = new Map(rows.map((r) => [r.rcept_no, r]));
+  const list = [...uniq.values()];
+  return exec(
+    `insert into insider_reports
+       (rcept_no, corp_code, symbol, corp_name, disclosed_at, reporter, registered, position,
+        main_holder, after_qty, change_qty)
+     select v.rcept_no, $1, $2, v.corp_name, v.disclosed_at::date, v.reporter, v.registered, v.position,
+            v.main_holder, nullif(v.after_qty,'')::bigint, nullif(v.change_qty,'')::bigint
+       from unnest($3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[],
+                   $10::text[], $11::text[])
+            as v(rcept_no, corp_name, disclosed_at, reporter, registered, position, main_holder, after_qty, change_qty)
+     on conflict (rcept_no) do update set
+       symbol = excluded.symbol,
+       change_qty = excluded.change_qty,
+       after_qty = excluded.after_qty`,
+    [
+      corpCode,
+      symbol,
+      list.map((r) => r.rcept_no),
+      list.map((r) => r.corp_name),
+      list.map((r) => r.rcept_dt),
+      list.map((r) => r.repror),
+      list.map((r) => r.isu_exctv_rgist_at),
+      list.map((r) => r.isu_exctv_ofcps),
+      list.map((r) => r.isu_main_shrholdr),
+      list.map((r) => String(parseNum(r.sp_stock_lmp_cnt) ?? '')),
+      list.map((r) => String(parseNum(r.sp_stock_lmp_irds_cnt) ?? '')),
+    ],
+  );
 }
 
 export interface ReportDetail {
@@ -149,13 +155,14 @@ export async function parseReportDetail(rceptNo: string): Promise<ReportDetail[]
   }
   if (!xml.trim()) return [];
 
+  // 값 칸 태그는 TD/TE 뿐 아니라 TU(방법·변동일·종류)도 쓴다. TU 를 놓치면 행이 통째로 비어 거래내역이 0건이 된다(2026-10-11).
   // 세부변동내역 표의 한 행은 아래 순서다(공시 서식 고정).
   //   [취득/처분방법 | 변동일 | 증권종류 | 변동전 | 증감 | 변동후 | 단가 | 비고]
   // 열 위치를 그대로 믿지 않고 "변동전 + 증감 = 변동후" 항등식으로 증감 열을 특정한다.
   const out: ReportDetail[] = [];
   const trBlocks = xml.match(/<TR[\s\S]*?<\/TR>/gi) ?? [];
   for (const tr of trBlocks) {
-    const cells = (tr.match(/<T[DE][\s\S]*?<\/T[DE]>/gi) ?? []).map((c) =>
+    const cells = (tr.match(/<T[DEHU](?=[\s>])[\s\S]*?<\/T[DEHU]>/gi) ?? []).map((c) =>
       c
         .replace(/<[^>]+>/g, ' ')
         .replace(/&[a-z]+;/gi, ' ')

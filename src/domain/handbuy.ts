@@ -48,10 +48,15 @@ export async function computeHandBuy(fromDate: string, toDate: string): Promise<
         join program_trade_daily p on p.symbol = f.symbol and p.date = f.date
        where f.investor_type = 'foreign' and f.date between $1::date and $2::date
     ), calc as (
-      select symbol, date, fq, iq, pq, fa, ia, pa,
-             case when abs(fq) + abs(iq) = 0 then 0.5
-                  else abs(fq)::numeric / (abs(fq) + abs(iq)) end as wf
-        from src
+      -- 프로그램 순매수 중 외국인 몫(wf). 2026-10-11 실측 보정:
+      --   종목별 (프로그램 ≈ a·외국인 + b·기관) 회귀(거래대금 정규화, 25거래일, R² 0.75~0.83)에서
+      --   KOSPI a=0.85 b=0.11 → 외국인 몫 0.89, KOSDAQ a=0.93 b=0.20 → 0.82.
+      --   예전 "|외국인|:|기관| 크기 비례"는 두 주체 부호가 반대인 날이 60% 라 맞지 않았다
+      --   (프로그램과 부호가 같은 비율: 외국인 91%, 기관 44%).
+      select s.symbol, s.date, fq, iq, pq, fa, ia, pa,
+             case when ins.market = 'KOSPI' then 0.89 else 0.82 end::numeric as wf
+        from src s
+        join instruments ins on ins.symbol = s.symbol
     ), ev as (
       select symbol, date, 'handbuy_total'::text as investor_type,
              (fq + iq - pq) as qty, (fa + ia - pa) as amt from calc

@@ -348,11 +348,28 @@ async function stepDart(date: string) {
   let reports = 0;
   let computed = 0;
   let listedBasis = 0;
+  // 유통주식수는 사업보고서 기준 연 1회 바뀌므로 최근 20일 안에 계산한 종목은 건너뛰고 오래된 종목부터 채운다.
+  // 임원 보고서(elestock)는 날마다 새로 올라오므로 대상 전체를 본다.
+  const fresh = new Set(
+    (
+      await query<{ symbol: string }>(
+        `select symbol from instruments
+          where free_float_updated_at > now() - interval '20 days' and symbol = any($1::text[])`,
+        [targets.map((t) => t.symbol)],
+      )
+    ).map((r) => r.symbol),
+  );
+  console.log(`  유통주식수 최근 계산 ${fresh.size}종목은 건너뜁니다`);
+  let skippedFloat = 0;
   for (const t of targets) {
     try {
       reports += await syncInsiderReports(t.corp_code, t.symbol);
     } catch (e) {
       console.log(`    [${t.symbol}] elestock 실패: ${errMessage(e)}`);
+    }
+    if (fresh.has(t.symbol)) {
+      skippedFloat++;
+      continue;
     }
     try {
       const r = await computeFreeFloat(t.symbol, t.corp_code, year);
@@ -366,7 +383,7 @@ async function stepDart(date: string) {
   console.log(
     `  보고서 ${reports}건 적재 · 원문 파싱 ${enriched.parsed}건 → 거래내역 ${enriched.trades}건`,
   );
-  console.log(`  유통주식수 실계산 ${computed}종목 / 상장주식수 대체 ${listedBasis}종목`);
+  console.log(`  유통주식수 실계산 ${computed}종목 / 상장주식수 대체 ${listedBasis}종목 / 최근 계산 건너뜀 ${skippedFloat}종목`);
   await logStep(date, 'dart', 'ok', reports + enriched.trades, `computed=${computed}`, 'opendart');
 }
 

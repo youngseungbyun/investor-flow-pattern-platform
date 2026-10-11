@@ -29,3 +29,5 @@ jobs:
         run: npm run db:migrate
       - name: 백테스트
         run: npm run backtest
+      - name: 수급 결합 실험(시장 대비 초과수익)
+        run: npm run backtest:flow -- --save

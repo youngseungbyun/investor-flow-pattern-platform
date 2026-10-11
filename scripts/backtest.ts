@@ -106,7 +106,7 @@ async function main() {
     console.log('\n--dry: 저장하지 않았습니다.');
     return;
   }
-  await exec(`delete from pattern_stats`);
+  await exec(`delete from pattern_stats where pattern <> 'excess'`);
   await bulkInsert(
     'pattern_stats',
     ['pattern', 'stage', 'horizon', 'n', 'win_rate', 'avg_ret', 'med_ret'],

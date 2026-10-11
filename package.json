@@ -18,6 +18,7 @@
     "db:check": "tsx scripts/supabase.ts check",
     "db:retention": "tsx scripts/retention.ts",
     "backtest": "tsx scripts/backtest.ts",
+    "backtest:flow": "tsx scripts/backtest-flow.ts",
     "enrich": "tsx scripts/enrich-symbol.ts"
   },
   "dependencies": {

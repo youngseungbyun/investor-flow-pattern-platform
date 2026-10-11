@@ -2,7 +2,7 @@ name: 공시 수집 (야간)
 
 # 공시(유통주식수 실계산 · 임원 매매)는 당일 분석과 무관한데 12분 넘게 걸려
 # 장 마감 후 수집(collect.yml)의 절반을 차지했다. 밤에 따로 돌린다.
-# 하루 300종목씩 유통주식수를 실계산해 상장주식수 대체 종목을 줄여 간다.
+# 하루 최대 300종목씩 유통주식수를 실계산해 상장주식수 대체 종목을 줄여 간다.
 on:
   schedule:
     # 21:30 KST 평일
@@ -42,4 +42,4 @@ jobs:
         run: echo "date=$(npx tsx scripts/last-bar-day.ts)" >> "$GITHUB_OUTPUT"
 
       - name: 공시 (유통주식수·임원 매매)
-        run: npm run batch -- dart --date ${{ steps.d.outputs.date }} --dartLimit ${{ github.event.inputs.limit || 150 }}
+        run: npm run batch -- dart --date ${{ steps.d.outputs.date }} --dartLimit ${{ github.event.inputs.limit || 300 }}
