@@ -707,11 +707,15 @@ function PatternTags({
               ×{p.breakoutVolumeRatio.toFixed(1)}
             </span>
           ) : null}
-          <span className="num opacity-60">{Math.round(p.score)}</span>
-          {/* 과거 같은 패턴·단계였던 사례가 10거래일 뒤 올랐던 비율. 표본이 30건 미만이면 안 붙는다. */}
+          <span className="num opacity-45" title="패턴 모양이 얼마나 뚜렷한지의 점수예요. 오를 확률이 아니에요.">{Math.round(p.score)}</span>
+          {/* 과거 같은 패턴·단계였던 사례가 10거래일 뒤 방향이 맞았던 비율. 표본이 30건 미만이면 안 붙는다.
+              시장 전체 상승분을 빼면 우위가 없었으므로(2026-10-11 실험) 강조하지 않고 참고 표시만 한다. */}
           {p.histWin != null ? (
-            <span className="num opacity-80" title={`과거 같은 패턴·단계 ${p.histN}건 중 10거래일 뒤 방향이 맞았던 비율`}>
-              승률 {Math.round(p.histWin)}%
+            <span
+              className="num opacity-45"
+              title={`과거 같은 패턴·단계 ${p.histN}건 중 10거래일 뒤 방향이 맞았던 비율이에요. 시장 전체가 오른 영향이 섞여 있어, 시장 대비로는 뚜렷한 우위가 확인되지 않았어요.`}
+            >
+              과거 적중 {Math.round(p.histWin)}%
             </span>
           ) : null}
         </span>
@@ -1145,6 +1149,9 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
             </tbody>
           </table>
         </div>
+        <p className="px-4 pb-3 pt-2 text-[11.5px] text-faint">
+          패턴 점수와 과거 적중률은 참고용이에요. 최근 25거래일을 시장 전체 상승분을 빼고 살펴본 결과, 수급과 패턴을 함께 걸어도 뚜렷한 우위가 확인되지 않았어요. 종목 추천이 아니에요.
+        </p>
       </Card>
     </div>
   );

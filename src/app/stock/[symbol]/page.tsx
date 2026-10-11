@@ -495,7 +495,7 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
           <div className="panel-head">
             <div>
               <h2 className="panel-title">패턴 판정 근거</h2>
-              <p className="panel-desc">점수가 어떻게 나왔는지 항목별로 보여줘요</p>
+              <p className="panel-desc">점수가 어떻게 나왔는지 항목별로 보여줘요. 패턴은 참고용이고, 시장 대비 우위는 아직 확인되지 않았어요</p>
             </div>
           </div>
           <div className="panel-body space-y-2">
