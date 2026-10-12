@@ -227,6 +227,7 @@ export default function Dashboard() {
       <div className="mx-auto max-w-[1720px] space-y-4 px-5 py-5">
         {loadError ? <LoadError message={loadError} /> : <MarketChart status={status} catalog={catalog} />}
         {loadError || !date ? null : <HandBuyPanel date={date} />}
+        {loadError || !date ? null : <InsiderBuyPanel />}
         {loadError ? null : !date || !catalog ? (
           <Skeleton />
         ) : (
@@ -589,6 +590,90 @@ function HandBuyPanel({ date }: { date: string }) {
         {data?.notes?.length ? (
           <p className="mt-2 text-[11.5px] text-faint">{data.notes[data.notes.length - 1]}</p>
         ) : null}
+      </div>
+    </section>
+  );
+}
+
+interface InsiderBuyRow {
+  symbol: string; name: string; market: string; trade_date: string; disclosed_at: string;
+  officer_name: string | null; position: string | null; qty: string; price: string | null;
+  amount: string | null; dartUrl: string;
+}
+
+/** 최근 임원 장내매수. 공시 원문에서 취득방법이 장내매수로 확인된 건만 담긴다. */
+function InsiderBuyPanel() {
+  const [days, setDays] = useState<7 | 14 | 30>(14);
+  const [data, setData] = useState<{ rows: InsiderBuyRow[]; notes: string[] } | null>(null);
+
+  useEffect(() => {
+    setData(null);
+    fetch(`/api/insider?days=${days}&limit=30`)
+      .then((r) => r.json())
+      .then((d) => setData({ rows: d.rows ?? [], notes: d.notes ?? [] }))
+      .catch(() => setData({ rows: [], notes: ['불러오지 못했어요.'] }));
+  }, [days]);
+
+  return (
+    <section className="panel">
+      <div className="panel-head flex-wrap gap-y-2">
+        <div>
+          <h2 className="panel-title">임원 장내매수</h2>
+          <p className="panel-desc">임원이 자기 돈으로 시장에서 직접 산 거래예요. 공시 원문에서 확인된 건만 보여줘요.</p>
+        </div>
+        <Segmented
+          label="기간"
+          value={String(days) as '7' | '14' | '30'}
+          onChange={(v) => setDays(Number(v) as 7 | 14 | 30)}
+          options={[{ v: '7', ko: '7일' }, { v: '14', ko: '14일' }, { v: '30', ko: '30일' }]}
+        />
+      </div>
+      <div className="panel-body">
+        {data === null ? (
+          <div className="skel h-40 w-full" />
+        ) : data.rows.length === 0 ? (
+          <p className="py-8 text-center text-[12.5px] text-faint">이 기간에 확인된 임원 장내매수가 없어요.</p>
+        ) : (
+          <div className="-mx-1 overflow-x-auto px-1">
+            <table className="w-full text-[12.5px]">
+              <thead>
+                <tr className="text-left text-[11.5px] text-faint">
+                  <th className="py-1.5 pr-3 font-normal">거래일</th>
+                  <th className="py-1.5 pr-3 font-normal">종목</th>
+                  <th className="hidden py-1.5 pr-3 font-normal sm:table-cell">보고자</th>
+                  <th className="py-1.5 pr-3 text-right font-normal">수량</th>
+                  <th className="hidden py-1.5 pr-3 text-right font-normal sm:table-cell">단가</th>
+                  <th className="py-1.5 text-right font-normal">금액</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((r, i) => (
+                  <tr key={`${r.symbol}-${r.trade_date}-${i}`} className="border-t border-line">
+                    <td className="num py-1.5 pr-3 text-faint">{r.trade_date.slice(5)}</td>
+                    <td className="py-1.5 pr-3">
+                      <Link href={`/stock/${r.symbol}`} className="font-semibold hover:underline">
+                        {r.name}
+                      </Link>
+                      <span className="num ml-1.5 text-faint">{r.symbol}</span>
+                    </td>
+                    <td className="hidden py-1.5 pr-3 sm:table-cell">
+                      <a href={r.dartUrl} target="_blank" rel="noreferrer" className="hover:underline">
+                        {r.officer_name ?? '-'}
+                      </a>
+                      <span className="ml-1.5 text-faint">{r.position ?? ''}</span>
+                    </td>
+                    <td className="num py-1.5 pr-3 text-right">{nf.format(Number(r.qty))}주</td>
+                    <td className="num hidden py-1.5 pr-3 text-right text-faint sm:table-cell">
+                      {r.price == null ? '-' : nf.format(Number(r.price))}
+                    </td>
+                    <td className="num up py-1.5 text-right font-semibold">{r.amount == null ? '-' : won(Number(r.amount))}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {data?.notes?.length ? <p className="mt-2 text-[11.5px] text-faint">{data.notes[data.notes.length - 1]}</p> : null}
       </div>
     </section>
   );

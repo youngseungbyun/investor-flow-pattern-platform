@@ -153,6 +153,11 @@ export async function parseReportDetail(rceptNo: string): Promise<ReportDetail[]
   } catch {
     xml = buf.toString('utf8');
   }
+  return parseReportXml(xml);
+}
+
+/** 보고서 원문 XML 에서 세부 변동내역 행을 뽑는다(네트워크 없이 시험할 수 있게 분리). */
+export function parseReportXml(xml: string): ReportDetail[] {
   if (!xml.trim()) return [];
 
   // 값 칸 태그는 TD/TE 뿐 아니라 TU(방법·변동일·종류)도 쓴다. TU 를 놓치면 행이 통째로 비어 거래내역이 0건이 된다(2026-10-11).

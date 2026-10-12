@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<DOCUMENT>
+<BODY><SECTION-1>
+<TABLE><TBODY>
+<TR><TD>직전보고서</TD><TD>32,048,145</TD><TD>33.62</TD><TD>32,048,145</TD><TD>33.62</TD></TR>
+<TR><TD>이번보고서</TD><TD>32,050,694</TD><TD>33.63</TD><TD>32,050,694</TD><TD>33.63</TD></TR>
+</TBODY></TABLE>
+<TITLE>다. 세부변동내역</TITLE>
+<TABLE><THEAD><TR><TH>보고사유</TH><TH>변동일*</TH><TH>특정증권등의종류</TH><TH>변동전</TH><TH>증감</TH><TH>변동후</TH><TH>단가</TH><TH>비고</TH></TR></THEAD>
+<TBODY>
+<TR><TU AUNIT="RPT_RSN">장내매수(+)</TU><TU AUNIT="MDF_DM">2026년 10월 07일</TU><TU AUNIT="STR_KND">보통주</TU><TE>32,048,145</TE><TE>2,549</TE><TE>32,050,694</TE><TE>274,235</TE><TU>-</TU></TR>
+<TR><TU>장내매도(-)</TU><TU>2026.10.08</TU><TU>보통주</TU><TE>32,050,694</TE><TE>-100</TE><TE>32,050,594</TE><TE>275,000</TE><TU>-</TU></TR>
+<TR><TD>합 계</TD><TD>32,048,145</TD><TD>2,549</TD><TD>32,050,694</TD><TD>274,235</TD></TR>
+</TBODY></TABLE>
+</SECTION-1></BODY>
+</DOCUMENT>

@@ -26,6 +26,7 @@ import { kisInfo } from '@/providers/kis';
 import { PATTERN_CATALOG, STAGE_KO } from '@/domain/patterns';
 import { SIGNAL_KO, linesForSymbol } from '@/domain/lines';
 import { DEFAULT_RULE, runRule, type Rule } from '@/domain/rules';
+import { overLimit } from '@/lib/ratelimit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -34,6 +35,8 @@ type Ctx = { params: Promise<{ route: string[] }> };
 
 const json = (data: unknown, status = 200) => NextResponse.json(data, { status });
 const bad = (message: string, status = 400) => json({ error: message }, status);
+const tooMany = () =>
+  NextResponse.json({ error: '요청이 너무 많아요. 잠시 뒤 다시 시도해 주세요.' }, { status: 429, headers: { 'Retry-After': '30' } });
 /**
  * 하루 한 번 바뀌는 데이터라 엣지에 잠깐 붙여 둔다. 같은 종목을 다시 열거나 새로고침할 때
  * Neon 까지 다녀오지 않는다. 지난 값을 먼저 주고 뒤에서 새로 받는다(stale-while-revalidate).
@@ -44,6 +47,7 @@ const cached = (data: unknown, sec = 60) =>
   });
 
 export async function GET(req: Request, ctx: Ctx) {
+  if (overLimit(req, 90)) return tooMany();
   const { route } = await ctx.params;
   const q = new URL(req.url).searchParams;
 
@@ -64,6 +68,8 @@ export async function GET(req: Request, ctx: Ctx) {
         return json(catalogPayload());
       case 'handbuy':
         return cached(await handbuyPayload(q), 60);
+      case 'insider':
+        return cached(await insiderPayload(q), 300);
       case 'find':
         return json({ items: await findInstruments(q.get('q') ?? '') });
       case 'lines':
@@ -85,6 +91,7 @@ export async function GET(req: Request, ctx: Ctx) {
 }
 
 export async function POST(req: Request, ctx: Ctx) {
+  if (overLimit(req, 30, 'post')) return tooMany();
   const { route } = await ctx.params;
   try {
     if (route[0] === 'rule') {
@@ -99,8 +106,11 @@ export async function POST(req: Request, ctx: Ctx) {
 }
 
 export async function PUT(req: Request, ctx: Ctx) {
+  if (overLimit(req, 20, 'put')) return tooMany();
   const { route } = await ctx.params;
   if (route[0] !== 'drawings') return bad('지원하지 않는 경로', 404);
+  // 인증 없는 쓰기 경로라 본문 크기를 막아 둔다(도형 수백 개면 충분한 크기).
+  if (Number(req.headers.get('content-length') ?? 0) > 200_000) return bad('본문이 너무 커요.', 413);
   const symbol = new URL(req.url).searchParams.get('symbol');
   if (!symbol) return bad('symbol 이 필요합니다.');
   const payload = await req.json();
@@ -491,6 +501,31 @@ async function findInstruments(raw: string) {
  * 손매수 상위. 외국인·기관·합계 중 하나를 골라 그날 직접 주문으로 가장 많이 산(판) 종목을 준다.
  * 손매수는 (외국인+기관 순매수) − 프로그램 순매수이고, flow_events 의 가상 주체로 들어 있다.
  */
+/** 최근 임원 장내매수 목록(등기·비등기 임원, 공시 원문에서 취득방법이 장내매수로 확인된 건만). */
+async function insiderPayload(q: URLSearchParams) {
+  const days = Math.min(120, Math.max(1, Number(q.get('days') ?? 14)));
+  const limit = Math.min(100, Math.max(1, Number(q.get('limit') ?? 30)));
+  const rows = await query(
+    `select t.symbol, i.name, i.market,
+            to_char(t.trade_date,'YYYY-MM-DD') trade_date,
+            to_char(t.disclosed_at,'YYYY-MM-DD') disclosed_at,
+            t.officer_name, t.position, t.registered,
+            t.change_qty::text qty, t.unit_price::text price,
+            (t.change_qty * t.unit_price)::text amount, t.rcept_no
+       from insider_trades t
+       join instruments i on i.symbol = t.symbol
+      where t.is_open_market_buy and t.trade_date >= current_date - $1::int
+      order by t.trade_date desc, (t.change_qty * t.unit_price) desc nulls last
+      limit $2`,
+    [days, limit],
+  );
+  return {
+    days,
+    rows: rows.map((r) => ({ ...r, dartUrl: dartViewerUrl(String(r.rcept_no)) })),
+    notes: ['공시 원문에서 취득방법이 장내매수로 확인된 건만 보여줘요. 거래일은 공시일보다 며칠 앞서요.'],
+  };
+}
+
 async function handbuyPayload(q: URLSearchParams) {
   const date = q.get('date') ?? todayKst();
   const kind = q.get('kind') ?? 'total';
