@@ -64,6 +64,7 @@ interface Payload {
   minute?: MinuteRow[];
   programDaily?: Array<{ date: string; buy_qty: string; sell_qty: string; net_qty: string; net_amt: string }>;
   handbuy?: Array<{ date: string; investor_type: string; amt: string; pct: string | null }>;
+  monthly?: Array<{ m: string; investor_type: string; amt: string; days: number; buy_days: number }>;
   signalLabels?: Record<string, string>;
   stageLabels?: Record<string, string>;
   instrument: {
@@ -274,6 +275,7 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
       </section>
 
       <HandBuyChart data={data} />
+      <MonthlyFlowPanel data={data} />
 
       <ProgramPanel data={data} />
 
@@ -516,6 +518,67 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
  * 프로그램 제외 외국인 = 외국인 순매수 − 프로그램 순매수 (근사치임을 명시한다).
  */
 /** 손매수(프로그램 제외) 일별. 외국인·기관이 직접 주문으로 산 금액을 날짜별로 나란히 본다. */
+/** 월별 수급 누적(억원). 일별 수급은 25거래일만 남지만 월별 합계는 길게 쌓인다. */
+function MonthlyFlowPanel({ data }: { data: Payload }) {
+  const cols: Array<[string, string]> = [
+    ['individual', '개인'],
+    ['foreign', '외국인'],
+    ['institution_total', '기관'],
+    ['pension', '연기금'],
+    ['private_fund', '사모'],
+    ['handbuy_total', '손매수'],
+  ];
+  const rows = useMemo(() => {
+    const by = new Map<string, Record<string, { amt: number; days: number }>>();
+    for (const r of data.monthly ?? []) {
+      const cur = by.get(r.m) ?? {};
+      cur[r.investor_type] = { amt: Number(r.amt), days: Number(r.days) };
+      by.set(r.m, cur);
+    }
+    return [...by.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+  }, [data.monthly]);
+  if (rows.length === 0) return null;
+  const eok = (v: number) => `${v >= 0 ? '+' : ''}${nf.format(Math.round(v / 1e8))}`;
+  return (
+    <section className="card mb-4">
+      <div className="panel-head">
+        <div>
+          <h2 className="panel-title">월별 수급 누적</h2>
+          <p className="panel-desc">
+            월별 순매수 금액(억원)이에요. 이번 달은 수집된 날까지만 들어 있고, 합산 시작 전 달은 보이지 않아요.
+          </p>
+        </div>
+      </div>
+      <div className="panel-body -mx-1 overflow-x-auto px-1">
+        <table className="w-full text-[12.5px]">
+          <thead>
+            <tr className="text-left text-[11.5px] text-faint">
+              <th className="py-1.5 pr-3 font-normal">월</th>
+              {cols.map(([, ko]) => (
+                <th key={ko} className="py-1.5 pr-3 text-right font-normal">{ko}</th>
+              ))}
+              <th className="py-1.5 text-right font-normal">일수</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(([m, v]) => (
+              <tr key={m} className="border-t border-line">
+                <td className="num py-1.5 pr-3">{m}</td>
+                {cols.map(([k]) => (
+                  <td key={k} className={`num py-1.5 pr-3 text-right ${v[k] ? (v[k].amt >= 0 ? 'up' : 'down') : 'text-faint'}`}>
+                    {v[k] ? eok(v[k].amt) : '-'}
+                  </td>
+                ))}
+                <td className="num py-1.5 text-right text-faint">{Math.max(...Object.values(v).map((x) => x.days))}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 function HandBuyChart({ data }: { data: Payload }) {
   const rows = useMemo(() => {
     const by = new Map<string, { date: string; foreign?: number; institution?: number; total?: number }>();

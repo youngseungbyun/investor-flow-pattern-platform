@@ -723,13 +723,23 @@ async function stockPayload(symbol: string, q: URLSearchParams) {
     [symbol, date],
   );
 
+  // 일별 수급은 25거래일만 보관하므로, 월별 합계(flow_monthly)로 최근 1년을 보여 준다.
+  const monthlyP = query(
+    `select to_char(month,'YYYY-MM') m, investor_type, net_buy_amount::text amt, days, buy_days
+       from flow_monthly
+      where symbol = $1 and month >= (date_trunc('month', current_date) - interval '12 months')::date
+        and investor_type in ('individual','foreign','institution_total','pension','private_fund','handbuy_total')
+      order by month desc`,
+    [symbol],
+  );
+
   const [
     instrument, bars, flow, periods, members, insiderRows, patterns,
-    markersFirst, markersAny, programDaily, handbuy, minute, lines, lineSignals,
+    markersFirst, markersAny, programDaily, handbuy, minute, lines, lineSignals, monthly,
   ] = await Promise.all([
     instrumentP.then((r) => r[0]),
     barsP, flowP, periodsP, membersP, insidersP, patternsP,
-    markersP, markersAnyP, programDailyP, handbuyP, minuteP, linesP, lineSignalsP,
+    markersP, markersAnyP, programDailyP, handbuyP, minuteP, linesP, lineSignalsP, monthlyP,
   ]);
   if (!instrument) throw new Error(`종목을 찾을 수 없습니다: ${symbol}`);
   bars.reverse();
@@ -750,6 +760,7 @@ async function stockPayload(symbol: string, q: URLSearchParams) {
     patterns,
     programDaily,
     handbuy,
+    monthly,
     minute,
     lines,
     lineSignals,

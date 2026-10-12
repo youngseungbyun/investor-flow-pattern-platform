@@ -12,6 +12,7 @@
  * instruments 처럼 날짜가 없는 마스터 테이블은 건드리지 않는다.
  */
 import { exec, pool, query } from '../src/lib/core';
+import { rollupFlowMonthly } from '../src/domain/monthly';
 
 /**
  * 날짜 컬럼으로 자를 테이블. 세 번째 값은 그 테이블만의 보존 거래일 수다.
@@ -59,6 +60,12 @@ function arg(name: string): string | undefined {
 async function main() {
   const keep = Number(arg('keep') ?? DEFAULT_KEEP);
   const dry = process.argv.includes('--dry');
+
+  // 일별 수급을 지우기 전에 월별 합계로 옮겨 둔다(보관 25거래일보다 훨씬 오래 남는다).
+  if (!dry) {
+    const r = await rollupFlowMonthly();
+    console.log(`수급 월별 누적 ${r.from ?? '처음'} → ${r.to ?? '(없음)'} · ${r.rows.toLocaleString('ko-KR')}행`);
+  }
 
   // 거래일 기준으로 센다. 달력 일수로 자르면 연휴가 낀 구간에서 실제 보존량이 흔들린다.
   const cutCache = new Map<number, string | null>();
