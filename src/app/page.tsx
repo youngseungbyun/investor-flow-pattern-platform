@@ -679,6 +679,32 @@ function InsiderBuyPanel() {
   );
 }
 
+/** 지금 조건을 매일 장 마감 알림에 넣을 수 있게 복사한다(저장·등록은 대표님이 붙여 주시면 AI 가 한다). */
+function AlertCopyButton({ rule }: { rule: RuleBody }) {
+  const [state, setState] = useState<'idle' | 'ok' | 'fail'>('idle');
+  const copy = async () => {
+    const { limit: _limit, ...body } = rule;
+    const text = JSON.stringify({ name: '내 조건', issues: false, max: 5, rule: { ...body, limit: 200 } }, null, 2);
+    try {
+      await navigator.clipboard.writeText(text);
+      setState('ok');
+    } catch {
+      setState('fail');
+    }
+    setTimeout(() => setState('idle'), 2500);
+  };
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      className="chip"
+      title="이 조건을 복사해 텔레그램이나 Claude 에 붙여 주시면 매일 장 마감 알림(신규 종목만)에 추가해 드려요"
+    >
+      {state === 'ok' ? '복사됨 · 붙여 넣어 주세요' : state === 'fail' ? '복사 실패' : '알림 조건으로 복사'}
+    </button>
+  );
+}
+
 function Chip({
   on, onClick, children, tone, dot,
 }: { on?: boolean; onClick?: () => void; children: React.ReactNode; tone?: string; dot?: string }) {
@@ -1160,6 +1186,7 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
                 <option value="traded_value">거래대금</option>
               </select>
             </label>
+            <AlertCopyButton rule={rule} />
           </div>
         </div>
       </Card>
