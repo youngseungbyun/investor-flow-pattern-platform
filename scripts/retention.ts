@@ -13,6 +13,7 @@
  */
 import { exec, pool, query } from '../src/lib/core';
 import { rollupFlowMonthly } from '../src/domain/monthly';
+import { archiveFlowDays } from '../src/domain/archive';
 
 /**
  * 날짜 컬럼으로 자를 테이블. 세 번째 값은 그 테이블만의 보존 거래일 수다.
@@ -65,6 +66,8 @@ async function main() {
   if (!dry) {
     const r = await rollupFlowMonthly();
     console.log(`수급 월별 누적 ${r.from ?? '처음'} → ${r.to ?? '(없음)'} · ${r.rows.toLocaleString('ko-KR')}행`);
+    const ar = await archiveFlowDays();
+    console.log(`일별 수급 압축 보관 ${ar.days}건 · ${ar.rows.toLocaleString('ko-KR')}행`);
   }
 
   // 거래일 기준으로 센다. 달력 일수로 자르면 연휴가 낀 구간에서 실제 보존량이 흔들린다.

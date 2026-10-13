@@ -53,3 +53,16 @@ test('ATR 은 양수이고 변동이 클수록 크다', () => {
   const wild = atr(bars(40, (i) => 100 + (i % 2 ? 8 : -8)));
   assert.ok(calm > 0 && wild > calm);
 });
+
+import { decodeCsv, encodeCsv } from '../src/domain/archive';
+
+test('일별 수급 압축 보관: 넣은 그대로 되돌아온다', () => {
+  const buf = encodeCsv('symbol,investor_type,net_buy_qty,net_buy_amount', [
+    ['005930', 'foreign', '-123', '-45600'],
+    ['000660', 'individual', '7', null],
+  ]);
+  const rows = decodeCsv(buf);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows[0], { symbol: '005930', investor_type: 'foreign', net_buy_qty: '-123', net_buy_amount: '-45600' });
+  assert.equal(rows[1].net_buy_amount, '');
+});

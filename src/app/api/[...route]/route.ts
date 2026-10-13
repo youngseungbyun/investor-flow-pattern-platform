@@ -228,7 +228,7 @@ async function marketSeries(q: URLSearchParams) {
 }
 
 async function statusPayload() {
-  const runs = await query(
+  const runsRaw = await query(
     `select to_char(date,'YYYY-MM-DD') date, step, status, row_count, error, provider,
             to_char(ran_at, 'YYYY-MM-DD HH24:MI') ran_at
        from batch_runs
@@ -240,6 +240,13 @@ async function statusPayload() {
                 where extract(dow from b.date) not in (0, 6)),
               (select max(date) from batch_runs))
       order by step`,
+  );
+  // 금융위 공공데이터 일봉은 장 마감 당일에 공시되지 않아 늘 "대기"로 남는다. 일봉은 KIS 가 이미 채우므로
+  // 문제가 아니라는 설명을 붙여 실제 장애로 읽히지 않게 한다(2026-10-13).
+  const runs = runsRaw.map((r) =>
+    r.step === 'ohlcv' && r.status === 'pending'
+      ? { ...r, note: '공공데이터(금융위) 일봉은 장 마감 당일 공시되지 않아요. 일봉은 KIS 로 이미 채워져 있어요.' }
+      : r,
   );
   const counts = await query(
     `select
