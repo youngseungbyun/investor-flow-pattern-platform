@@ -212,9 +212,18 @@ async function stepOhlcv(dates: string[]) {
  * 전 종목 × 종목당 1요청은 하루 배치로 감당이 안 되므로 거래대금으로 자른다.
  * 잘라낸 사실을 조용히 숨기지 않고 항상 콘솔·batch_runs 에 남긴다.
  */
-async function universe(date: string): Promise<{ symbols: string[]; total: number; minTv: number; cap: number }> {
-  const minTv = Number(process.env.FLOW_MIN_TRADED_VALUE ?? 1_000_000_000);
-  const cap = Number(process.env.FLOW_UNIVERSE ?? 1200);
+async function universe(
+  date: string,
+  wide = false,
+): Promise<{ symbols: string[]; total: number; minTv: number; cap: number }> {
+  // 수급·프로그램매매만 더 넓게 모은다(2026-10-13): 거래대금 3억 이상 최대 1,600종목.
+  // 패턴·라인 스캔은 계산·저장량이 커서 예전 기준(10억 이상 상위 1,200)을 그대로 쓴다.
+  // 근거: 텔레그램 분석(전 종목 네이버 수량×종가)과 비교하니 우리 수급이 전체의 약 3분의 1뿐이었다.
+  // 종목 하루당 DB 약 6KB 라 +500종목은 약 75MB — 512MB 한도 안(일별 원본은 flow_archive 로 따로 보관).
+  const minTv = wide
+    ? Number(process.env.FLOW_WIDE_MIN_TRADED_VALUE ?? 300_000_000)
+    : Number(process.env.FLOW_MIN_TRADED_VALUE ?? 1_000_000_000);
+  const cap = wide ? Number(process.env.FLOW_WIDE_UNIVERSE ?? 1600) : Number(process.env.FLOW_UNIVERSE ?? 1200);
   const total = Number(
     (await query<{ n: string }>(`select count(*) n from ohlcv_daily where date = $1`, [date]))[0]?.n ?? 0,
   );
@@ -235,7 +244,7 @@ async function stepFlow(date: string, lookbackDays: number) {
     await logStep(date, 'investor_flow', 'failed', 0, 'no active provider', null);
     return;
   }
-  const u = await universe(date);
+  const u = await universe(date, true);
   console.log(
     `  유니버스: ${u.symbols.length}종목 (전체 ${u.total} 중 거래대금 ${(u.minTv / 1e8).toFixed(0)}억 이상 상위 ${u.cap})`,
   );
@@ -462,7 +471,7 @@ async function stepProgram(date: string) {
     await logStep(date, 'program', 'skipped', 0, 'KIS 미설정', 'kis');
     return;
   }
-  const u = await universe(date);
+  const u = await universe(date, true);
   const limit = Number(arg('limit') ?? u.symbols.length);
   const symbols = u.symbols.slice(0, limit);
   console.log(`  프로그램매매(일별) 대상 ${symbols.length}종목 (유니버스 ${u.symbols.length})`);
