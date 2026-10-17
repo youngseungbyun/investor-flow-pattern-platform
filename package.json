@@ -20,6 +20,7 @@
     "db:retention": "tsx scripts/retention.ts",
     "backtest": "tsx scripts/backtest.ts",
     "backtest:flow": "tsx scripts/backtest-flow.ts",
+    "stars": "tsx scripts/stars.ts",
     "enrich": "tsx scripts/enrich-symbol.ts"
   },
   "dependencies": {

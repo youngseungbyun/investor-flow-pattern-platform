@@ -27,6 +27,7 @@ import { PATTERN_CATALOG, STAGE_KO } from '@/domain/patterns';
 import { SIGNAL_KO, linesForSymbol } from '@/domain/lines';
 import { DEFAULT_RULE, runRule, type Rule } from '@/domain/rules';
 import { overLimit } from '@/lib/ratelimit';
+import { buildAlert } from '@/domain/alert';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -68,6 +69,14 @@ export async function GET(req: Request, ctx: Ctx) {
         return json(catalogPayload());
       case 'handbuy':
         return cached(await handbuyPayload(q), 60);
+      case 'alert': {
+        // 장 마감 알림 문구: ?date=YYYY-MM-DD&symbols=a,b,c&max=5 (맥미니 알림 작업이 그대로 보낸다)
+        const adate = q.get('date') ?? todayKst();
+        const symbols = (q.get('symbols') ?? '').split(',').map((x) => x.trim()).filter((x) => /^[0-9A-Za-z]{6}$/.test(x));
+        if (symbols.length === 0) return bad('symbols 가 필요합니다.');
+        const max = Math.min(10, Math.max(1, Number(q.get('max') ?? 5)));
+        return cached(await buildAlert(adate, symbols, max), 60);
+      }
       case 'insider':
         return cached(await insiderPayload(q), 300);
       case 'find':

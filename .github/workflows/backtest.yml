@@ -33,3 +33,5 @@ jobs:
         run: npm run backtest:flow -- --save
       - name: 파일 크기 회수(vacuum full)
         run: npm run db:retention -- --full
+      - name: 알림 별 기준 갱신
+        run: npm run stars
