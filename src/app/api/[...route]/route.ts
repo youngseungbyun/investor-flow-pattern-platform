@@ -47,10 +47,45 @@ const cached = (data: unknown, sec = 60) =>
     headers: { 'Cache-Control': `public, s-maxage=${sec}, stale-while-revalidate=${sec * 10}` },
   });
 
+/**
+ * 쿼리 값 검증(2026-10-17 QA): 날짜가 아니거나 숫자가 아닌 값이 DB 까지 가서 500 + DB 오류 문구를 그대로 내던 문제를 막는다.
+ * 문제가 있으면 한국어 안내 문구를, 괜찮으면 null 을 돌려준다.
+ */
+const DATE_KEYS = ['date', 'start', 'end', 'from', 'to', 'minuteDate'];
+const NUM_KEYS = ['days', 'limit', 'n', 'minScore', 'minTradedValue', 'max', 'markerMinPct', 'markerLimit', 'flowMinPct'];
+function badQuery(q: URLSearchParams): string | null {
+  for (const k of DATE_KEYS) {
+    const v = q.get(k);
+    if (v === null || v === '') continue;
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+    const ok = !!m && new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toISOString().slice(0, 10) === v;
+    if (!ok) return `${k} 는 YYYY-MM-DD 모양의 날짜여야 해요.`;
+  }
+  for (const k of NUM_KEYS) {
+    const v = q.get(k);
+    if (v === null || v === '') continue;
+    if (!Number.isFinite(Number(v))) return `${k} 는 숫자여야 해요.`;
+  }
+  return null;
+}
+
+/** DB 오류 문구는 밖으로 내보내지 않는다(내용은 서버 로그에만). */
+function failure(e: unknown) {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (msg.startsWith('종목을 찾을 수 없습니다')) return bad(msg, 404);
+  if ((e as { code?: unknown })?.code !== undefined || /invalid input syntax|violates|relation |column /.test(msg)) {
+    console.error('[api]', msg);
+    return bad('데이터를 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.', 500);
+  }
+  return bad(msg, 500);
+}
+
 export async function GET(req: Request, ctx: Ctx) {
   if (overLimit(req, 90)) return tooMany();
   const { route } = await ctx.params;
   const q = new URL(req.url).searchParams;
+  const badMsg = badQuery(q);
+  if (badMsg) return bad(badMsg, 400);
 
   try {
     switch (route[0]) {
@@ -95,7 +130,7 @@ export async function GET(req: Request, ctx: Ctx) {
         return bad(`알 수 없는 경로: /api/${route.join('/')}`, 404);
     }
   } catch (e) {
-    return bad(e instanceof Error ? e.message : String(e), 500);
+    return failure(e);
   }
 }
 
@@ -105,12 +140,14 @@ export async function POST(req: Request, ctx: Ctx) {
   try {
     if (route[0] === 'rule') {
       const body = (await req.json()) as Partial<Rule>;
+      // POST 본문 date 도 같은 규칙으로 검증
+      if (body.date !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(String(body.date))) return bad('date 는 YYYY-MM-DD 모양의 날짜여야 해요.', 400);
       const rule: Rule = { ...DEFAULT_RULE, date: todayKst(), ...body } as Rule;
       return json(await runRule(rule));
     }
     return bad(`알 수 없는 경로: /api/${route.join('/')}`, 404);
   } catch (e) {
-    return bad(e instanceof Error ? e.message : String(e), 500);
+    return failure(e);
   }
 }
 
@@ -544,7 +581,8 @@ async function insiderPayload(q: URLSearchParams) {
 
 async function handbuyPayload(q: URLSearchParams) {
   const date = q.get('date') ?? todayKst();
-  const kind = q.get('kind') ?? 'total';
+  const kindRaw = q.get('kind') ?? 'total';
+  const kind = kindRaw === 'foreign' || kindRaw === 'institution' ? kindRaw : 'total';
   const side = q.get('side') === 'sell' ? 'sell' : 'buy';
   const market = q.get('market');
   const limit = Math.min(100, Math.max(1, Number(q.get('limit') ?? 30)));
@@ -613,7 +651,10 @@ async function stockPayload(symbol: string, q: URLSearchParams) {
   );
 
   const barsP = query(
-    `select to_char(date,'YYYY-MM-DD') date, o, h, l, c, volume, traded_value
+    // 거래정지·무거래일은 KIS 가 시가·고가·저가를 0 으로 준다(전체의 약 5%). 0 으로 그리면 차트가 바닥까지 꺼져서 종가로 채운다.
+    `select to_char(date,'YYYY-MM-DD') date,
+            case when o > 0 then o else c end o, case when h > 0 then h else c end h, case when l > 0 then l else c end l,
+            c, volume, traded_value
        from ohlcv_daily where symbol = $1 and date <= $2
        order by date desc limit $3`,
     [symbol, date, days],

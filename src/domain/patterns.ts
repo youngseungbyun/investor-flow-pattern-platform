@@ -805,7 +805,7 @@ export async function loadBars(symbol: string, asOf: string, limit = 220): Promi
   const rows = await query<{ date: string; o: string; h: string; l: string; c: string; volume: string }>(
     `select to_char(date,'YYYY-MM-DD') date, o, h, l, c, volume
        from ohlcv_daily
-      where symbol = $1 and date <= $2 and c is not null
+      where symbol = $1 and date <= $2 and c is not null and o > 0 and h > 0 and l > 0
       order by date desc
       limit $3`,
     [symbol, asOf, limit],
@@ -837,6 +837,7 @@ export async function loadBarsBatch(symbols: string[], asOf: string, limit = 220
                 row_number() over (partition by symbol order by date desc) rn
            from ohlcv_daily
           where symbol = any($1::text[]) and date <= $2::date and date > ($2::date - 500) and c is not null
+            and o > 0 and h > 0 and l > 0
        ) t
       where rn <= $3
       order by symbol, date`,

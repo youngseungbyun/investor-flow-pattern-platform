@@ -106,7 +106,11 @@ export function assemble(p: {
   const f = fmtForeignLine(p.foreignSell, p.foreignBuy);
   if (f) out.push(f);
   out.push(THICK);
-  out.push(p.cards.join(`\n${THIN}\n`));
+  if (p.cards.length === 0) {
+    out.push('신규 신호 종목이 없어요');
+  } else {
+    out.push(p.cards.join(`\n${THIN}\n`));
+  }
   if (p.folded.length) out.push(THIN, `외 ${p.folded.length}종목 · ${p.folded.join(' · ')}`);
   if (p.handbuyLines.length) out.push(THICK, '✋ 손매수 상위 (카드 밖)', ...p.handbuyLines);
   if (p.insiderLines.length) out.push(THICK, '🧑‍💼 임원 장내매수 (최근 5거래일)', ...p.insiderLines);
