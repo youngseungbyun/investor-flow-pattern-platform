@@ -107,8 +107,8 @@ export async function GET(req: Request, ctx: Ctx) {
       case 'handbuy':
         return cached(await handbuyPayload(q), 60);
       case 'alert-rules':
-        // 지금 돌고 있는 알림 조건(읽기 전용). 조건 원천은 맥미니 sd-rules.json, 이쪽은 사본이다.
-        return cached({ rules: ALERT_RULES.map((d) => ({ id: d.id, name: d.name, lines: describeRule(d) })), filters: ALERT_FILTER_LINES }, 300);
+        // 알림 조건의 원천(읽기 전용). defs 는 맥미니 알림 작업이 그대로 쓰고, 못 읽으면 sd-rules.json 으로 되돌아간다.
+        return cached({ rules: ALERT_RULES.map((d) => ({ id: d.id, name: d.name, lines: describeRule(d) })), filters: ALERT_FILTER_LINES, defs: ALERT_RULES }, 300);
       case 'alert-preview':
         // 오늘 알림 미리보기: 알림 작업과 같은 순서로 걸러 같은 문구를 만든다.
         return cached(await alertPreview(q.get('date') ?? todayKst()), 120);

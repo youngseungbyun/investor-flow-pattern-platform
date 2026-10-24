@@ -1,8 +1,8 @@
 /**
  * 알림 설정 화면(/alerts)용: 지금 돌고 있는 알림 조건과, 그 조건으로 만든 오늘 알림 미리보기.
  *
- * 조건의 원천은 맥미니 `orchestration-system/macmini/schedules/sd-rules.json` 이고, 이 파일의
- * 사본이 `src/data/alert-rules.json` 이다(1단계는 읽기 전용이라 사본을 둔다. 한쪽을 고치면 다른 쪽도 고친다).
+ * 조건의 원천은 이 사이트의 `src/data/alert-rules.json` 이다. 맥미니 알림 작업은 /api/alert-rules 의 defs 를 읽고,
+ * 읽지 못할 때만 `orchestration-system/macmini/schedules/sd-rules.json`(폴백 사본)을 쓴다. 조건을 바꾸면 두 파일을 같이 고친다.
  * 신규 판정과 거르기는 맥미니 알림 작업(`sd-after-close.md` 3절)과 같은 순서를 따른다:
  *   신규 = 기준일 결과 − 직전 거래일 결과 → 같은 종목은 앞선 조건에만 → 당일 상승 마감 → 종가 ≥ 20일 이동평균.
  */
