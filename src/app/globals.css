@@ -551,6 +551,10 @@ input[type='date']::-webkit-calendar-picker-indicator {
 .tag-ok { background: transparent; color: var(--up); font-weight: 500; padding-inline: 3px; }
 .tag-violet { background: var(--s3); color: var(--fg-2); font-weight: 500; }
 .tag-mute { background: transparent; color: var(--fg-3); font-weight: 500; padding-inline: 3px; }
+/* 별 배지: 테두리 없이 연한 금색 채움. 별만 금색, 글자는 본문색. */
+.tag-star { background: var(--gold-soft); color: var(--fg-2); font-weight: 500; }
+.tag-mute-fill { background: var(--s3); color: var(--fg-3); font-weight: 500; }
+.text-gold { color: var(--gold); }
 
 .rail {
   display: grid;

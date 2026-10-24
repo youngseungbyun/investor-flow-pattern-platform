@@ -28,6 +28,7 @@ import { SIGNAL_KO, linesForSymbol } from '@/domain/lines';
 import { DEFAULT_RULE, runRule, type Rule } from '@/domain/rules';
 import { overLimit } from '@/lib/ratelimit';
 import { buildAlert } from '@/domain/alert';
+import { starBadges } from '@/domain/starBadges';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -104,6 +105,13 @@ export async function GET(req: Request, ctx: Ctx) {
         return json(catalogPayload());
       case 'handbuy':
         return cached(await handbuyPayload(q), 60);
+      case 'stars': {
+        // 웹 화면용 별 배지: ?date=YYYY-MM-DD&symbols=a,b,c (알림과 같은 기준)
+        const sdate = q.get('date') ?? todayKst();
+        const symbols = (q.get('symbols') ?? '').split(',').map((x) => x.trim()).filter((x) => /^[0-9A-Za-z]{6}$/.test(x));
+        if (symbols.length === 0) return bad('symbols 가 필요합니다.');
+        return cached({ date: sdate, badges: await starBadges(sdate, symbols) }, 60);
+      }
       case 'alert': {
         // 장 마감 알림 문구: ?date=YYYY-MM-DD&symbols=a,b,c&max=5 (맥미니 알림 작업이 그대로 보낸다)
         const adate = q.get('date') ?? todayKst();

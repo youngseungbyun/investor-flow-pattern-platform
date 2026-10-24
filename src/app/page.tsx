@@ -1,11 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MagnifyingGlass, Moon, Plus, Sun, X } from '@phosphor-icons/react/dist/ssr';
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import NumberTicker from '@/components/NumberTicker';
 import SymbolSearch from '@/components/SymbolSearch';
+import { StarBadges, useStarBadges } from '@/components/StarBadges';
 
 /* ══════════════════════════ 타입 ══════════════════════════ */
 
@@ -111,6 +112,30 @@ const Icon = {
   search: <MagnifyingGlass {...ICON} />,
 };
 
+/* ══════════════════════════ URL 상태 ══════════════════════════ */
+
+/** 기준일·탭·조건을 주소에 담아 둔다. 상세 화면에 갔다 돌아와도, 새로고침해도, 링크를 보내도 같은 화면이 나온다. */
+function setUrlParams(patch: Record<string, string | null>) {
+  try {
+    const u = new URL(window.location.href);
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === null || v === '') u.searchParams.delete(k);
+      else u.searchParams.set(k, v);
+    }
+    const next = `${u.pathname}${u.search}`;
+    if (next !== `${window.location.pathname}${window.location.search}`) window.history.replaceState(window.history.state, '', next);
+    // 상세 화면의 "← 스크리너"가 이 주소로 돌아온다.
+    try { sessionStorage.setItem('sd-home', next); } catch { /* 무시 */ }
+  } catch { /* 주소 갱신 실패는 화면에 영향 없음 */ }
+}
+
+const urlParam = (k: string): string | null => {
+  try { return new URL(window.location.href).searchParams.get(k); } catch { return null; }
+};
+const isDay = (v: string | null): v is string => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);
+
+type HomeTab = 'today' | 'market';
+
 /* ══════════════════════════ 페이지 ══════════════════════════ */
 
 export default function Dashboard() {
@@ -121,6 +146,24 @@ export default function Dashboard() {
   const [fromDate, setFromDate] = useState('');
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [tab, setTab] = useState<HomeTab>('today');
+  // 주소에서 기준일·탭을 읽기 전에는 기본 기준일을 넣지 않는다(읽은 값이 덮어써지는 것을 막는다).
+  const [urlReady, setUrlReady] = useState(false);
+
+  useEffect(() => {
+    const t = urlParam('tab');
+    if (t === 'market') setTab('market');
+    const d = urlParam('d');
+    if (isDay(d)) setDate(d);
+    const f = urlParam('from');
+    if (isDay(f)) setFromDate(f);
+    setUrlReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!urlReady) return;
+    setUrlParams({ tab: tab === 'market' ? 'market' : null, d: date && date !== lastDayRef.current ? date : null, from: fromDate || null });
+  }, [urlReady, tab, date, fromDate]);
 
   useEffect(() => {
     setTheme((document.documentElement.dataset.theme as 'dark' | 'light') ?? 'dark');
@@ -162,7 +205,9 @@ export default function Dashboard() {
   // 수급만 들어와도 개장으로 잡혀서, 일봉·패턴이 아직 없는 반쯤 찬 날을 가리킬 때가 있다.
   // 그 날을 기본으로 두면 어떤 조건을 걸어도 0건이라 "검색이 안 된다"로 보인다.
   const lastDay = String(status?.counts?.last_complete_day || status?.counts?.last_trading_day || '');
-  useEffect(() => { if (lastDay && !date) setDate(lastDay); }, [lastDay, date]);
+  const lastDayRef = useRef('');
+  lastDayRef.current = lastDay;
+  useEffect(() => { if (urlReady && lastDay && !date) setDate(lastDay); }, [urlReady, lastDay, date]);
 
   return (
     <main className="min-h-screen">
@@ -172,9 +217,14 @@ export default function Dashboard() {
         <div className="mx-auto flex max-w-[1720px] flex-wrap items-center gap-x-5 gap-y-1 px-5 pt-2.5">
           <h1 className="text-[15px] font-semibold tracking-[-0.012em]">수급·패턴 분석</h1>
 
-          <span className="hidden pb-2 text-[12.5px] text-faint lg:inline">
-            수급, 패턴, 라인을 한 화면에서 조합해 찾습니다
-          </span>
+          <div className="pb-1.5">
+            <Segmented
+              label="화면"
+              value={tab}
+              onChange={setTab}
+              options={[{ v: 'today', ko: '오늘 종목' }, { v: 'market', ko: '시장·공시' }]}
+            />
+          </div>
 
           {/* 휴대폰에서는 한 줄에 다 안 들어가므로 이 줄만 옆으로 밀어 본다(세로로 쪼개지지 않게). */}
           <div className="flex w-full items-center gap-2 overflow-x-auto pb-1.5 [scrollbar-width:none] sm:ml-auto sm:w-auto sm:overflow-visible [&>*]:shrink-0">
@@ -225,14 +275,19 @@ export default function Dashboard() {
       </header>
 
       <div className="mx-auto max-w-[1720px] space-y-4 px-5 py-5">
-        {loadError ? <LoadError message={loadError} /> : <MarketChart status={status} catalog={catalog} />}
-        {loadError || !date ? null : <HandBuyPanel date={date} />}
-        {loadError || !date ? null : <InsiderBuyPanel />}
-        {loadError ? null : !date || !catalog ? (
+        {loadError ? <LoadError message={loadError} /> : null}
+        {tab === 'market' ? (
+          <>
+            {loadError ? null : <MarketChart status={status} catalog={catalog} />}
+            {loadError || !date ? null : <HandBuyPanel date={date} />}
+            {loadError || !date ? null : <InsiderBuyPanel />}
+          </>
+        ) : loadError ? null : !date || !catalog ? (
           <Skeleton />
         ) : (
-          <FlowTab date={date} fromDate={fromDate || undefined} catalog={catalog} status={status} />
+          <FlowTab date={date} fromDate={fromDate || undefined} catalog={catalog} />
         )}
+        {loadError ? null : <DataStatus status={status} />}
       </div>
 
       <footer className="mx-auto max-w-[1720px] px-5 pb-8 pt-2 text-[11px] leading-relaxed text-faint">
@@ -289,8 +344,6 @@ function MarketChart({ status, catalog }: { status: Status | null; catalog: Cata
   const toggle = (id: string) =>
     setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
   const allIds = (catalog?.investors ?? []).map((x) => x.id);
-
-  const n = (k: string) => Number(status?.counts?.[k] ?? 0);
 
   return (
     <section className="panel">
@@ -401,33 +454,42 @@ function MarketChart({ status, catalog }: { status: Status | null; catalog: Cata
           )}
         </div>
 
-        {/* 운영 메타는 결정에 쓰는 숫자가 아니라 상태다. 한 줄로 낮춰 둔다. */}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-faint">
-          {status && (
-            <span className="flex items-center gap-1.5">
-              <span
-                className={`inline-block size-1.5 rounded-full ${
-                  status.overall === 'ok' ? 'bg-ok' : status.overall === 'partial' ? 'bg-warn' : 'bg-faint'
-                }`}
-                aria-hidden
-              />
-              분석 기준 {status.counts.last_complete_day ?? status.counts.last_trading_day ?? '-'}
-            </span>
-          )}
-          {/* 장은 열렸는데 아직 수집이 안 끝난 날이 있으면 밝혀 둔다.
-              이 사실을 숨기면 "왜 오늘 게 없지"가 된다. */}
-          {status?.counts?.last_trading_day &&
-            status.counts.last_complete_day &&
-            status.counts.last_trading_day !== status.counts.last_complete_day && (
-              <span className="text-warn">{status.counts.last_trading_day} 수집 중</span>
-            )}
-          <span>수급 {num(n('flow_daily'))}행</span>
-          <span>일봉 {num(n('ohlcv'))}행</span>
-          <span>패턴 {num(n('patterns'))}건 (돌파 확정 {num(n('patterns_confirmed'))})</span>
-          <span>수급 원천 {status?.counts?.flow_source || '없음'}</span>
-        </div>
       </div>
     </section>
+  );
+}
+
+/* ══════════════════════ 데이터 상태 (한 곳) ══════════════════════ */
+
+/** 결정에 쓰는 숫자가 아니라 운영 상태라서 화면 맨 아래 한 줄로 모았다. */
+function DataStatus({ status }: { status: Status | null }) {
+  const n = (k: string) => Number(status?.counts?.[k] ?? 0);
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-faint">
+      {status && (
+        <span className="flex items-center gap-1.5">
+          <span
+            className={`inline-block size-1.5 rounded-full ${
+              status.overall === 'ok' ? 'bg-ok' : status.overall === 'partial' ? 'bg-warn' : 'bg-faint'
+            }`}
+            aria-hidden
+          />
+          분석 기준 {status.counts.last_complete_day ?? status.counts.last_trading_day ?? '-'}
+        </span>
+      )}
+      {/* 장은 열렸는데 아직 수집이 안 끝난 날이 있으면 밝혀 둔다.
+          이 사실을 숨기면 "왜 오늘 게 없지"가 된다. */}
+      {status?.counts?.last_trading_day &&
+        status.counts.last_complete_day &&
+        status.counts.last_trading_day !== status.counts.last_complete_day && (
+          <span className="text-warn">{status.counts.last_trading_day} 수집 중</span>
+        )}
+      <span>수급 {num(n('flow_daily'))}행</span>
+      <span>일봉 {num(n('ohlcv'))}행</span>
+      <span>패턴 {num(n('patterns'))}건 (돌파 확정 {num(n('patterns_confirmed'))})</span>
+      <span>수급 원천 {status?.counts?.flow_source || '없음'}</span>
+      <span>수집 경로 {status?.providers.map((p) => p.id).join(' → ') || '없음'}</span>
+    </div>
   );
 }
 
@@ -849,7 +911,16 @@ function SymbolCell({ row }: { row: { symbol: string; name: string; market: stri
   return (
     <>
       {row.rank !== undefined && <span className="num mr-2 inline-block w-6 text-right text-[12px] text-faint">{row.rank}</span>}
-      <Link href={`/stock/${row.symbol}`} className="font-semibold text-fg hover:text-accent hover:underline">
+      <Link
+        href={`/stock/${row.symbol}`}
+        className="font-semibold text-fg hover:text-accent hover:underline"
+        onClick={() => {
+          try {
+            sessionStorage.setItem('sd-restore', '1');
+            sessionStorage.setItem('sd-scroll', String(Math.round(window.scrollY)));
+          } catch { /* 무시 */ }
+        }}
+      >
         {row.name}
       </Link>
       <span className="num ml-1.5 text-[12px] text-faint">{row.symbol}</span>
@@ -860,17 +931,35 @@ function SymbolCell({ row }: { row: { symbol: string; name: string; market: stri
 
 /* ══════════════════════ 1. 수급분석 ══════════════════════ */
 
-function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?: string; catalog: Catalog; status: Status | null }) {
-  const [rule, setRule] = useState<RuleBody>(() => ({ ...catalog.defaultRule }));
+/** 주소의 조건(r)을 읽는다. 모양이 이상하면 기본값을 쓴다. */
+function readSavedRule(catalog: Catalog): { rule: RuleBody; f: boolean; p: boolean; l: boolean } {
+  const base = { rule: { ...catalog.defaultRule } as RuleBody, f: true, p: true, l: false };
+  try {
+    const raw = urlParam('r');
+    if (!raw) return base;
+    const j = JSON.parse(raw) as { rule?: Partial<RuleBody>; f?: boolean; p?: boolean; l?: boolean };
+    if (!j || typeof j !== 'object' || !j.rule || !Array.isArray(j.rule.flow)) return base;
+    return {
+      rule: { ...base.rule, ...j.rule } as RuleBody,
+      f: j.f !== false,
+      p: j.p !== false,
+      l: j.l === true,
+    };
+  } catch { return base; }
+}
+
+function FlowTab({ date, fromDate, catalog }: { date: string; fromDate?: string; catalog: Catalog }) {
+  const saved = useMemo(() => readSavedRule(catalog), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [rule, setRule] = useState<RuleBody>(() => saved.rule);
   const [rows, setRows] = useState<RuleRow[] | null>(null);
   const [notes, setNotes] = useState<string[]>([]);
   const [sources, setSources] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchErr, setSearchErr] = useState<string | null>(null);
   // 세 축을 각각 껐다 켠다. 끄면 그 축은 조건에서 아예 빠진다.
-  const [useFlow, setUseFlow] = useState(true);
-  const [usePattern, setUsePattern] = useState(true);
-  const [useLine, setUseLine] = useState(false);
+  const [useFlow, setUseFlow] = useState(saved.f);
+  const [usePattern, setUsePattern] = useState(saved.p);
+  const [useLine, setUseLine] = useState(saved.l);
   const [ranAt, setRanAt] = useState<string | null>(null);
 
   const run = useCallback(async () => {
@@ -916,6 +1005,29 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
   }, [rule, date, fromDate, useFlow, usePattern, useLine]);
 
   useEffect(() => { void run(); }, [date]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 조건이 바뀌면 주소에 담는다(기본 조건이면 주소를 깨끗하게 둔다).
+  useEffect(() => {
+    const cur = JSON.stringify({ rule, f: useFlow, p: usePattern, l: useLine });
+    const def = JSON.stringify({ rule: catalog.defaultRule, f: true, p: true, l: false });
+    setUrlParams({ r: cur === def ? null : cur });
+  }, [rule, useFlow, usePattern, useLine, catalog.defaultRule]);
+
+  // 상세 화면에서 돌아오면 보던 위치로 되돌린다(종목 링크를 누를 때 SymbolCell 이 표시를 남긴다).
+  const scrolled = useRef(false);
+  useEffect(() => {
+    if (!rows || scrolled.current) return;
+    scrolled.current = true;
+    try {
+      if (sessionStorage.getItem('sd-restore') === '1') {
+        const y = Number(sessionStorage.getItem('sd-scroll') ?? 0);
+        sessionStorage.removeItem('sd-restore');
+        if (y > 0) requestAnimationFrame(() => window.scrollTo(0, y));
+      }
+    } catch { /* 저장소를 못 쓰면 맨 위에서 시작 */ }
+  }, [rows]);
+
+  const badgeMap = useStarBadges(date, useMemo(() => (rows ?? []).map((r) => r.symbol), [rows]));
 
   const setFlow = (i: number, patch: Partial<FlowCondition>) =>
     setRule((r) => ({ ...r, flow: r.flow.map((f, j) => (i === j ? { ...f, ...patch } : f)) }));
@@ -1194,7 +1306,6 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-b border-line bg-surface-2 px-4 py-2.5 text-[12px] text-mute">
         <span><span className="text-faint">찾은 종목</span> <b className="num text-fg">{rows?.length ?? 0}</b>종목</span>
         <span><span className="text-faint">수급 출처</span> <span className="text-fg">{sources.join(', ') || '없음'}</span></span>
-        <span><span className="text-faint">수집 경로</span> <span className="text-fg">{status?.providers.map((p) => p.id).join(' → ') || '없음'}</span></span>
         {notes.map((n) => <span key={n} className="text-warn">{n}</span>)}
       </div>
 
@@ -1205,6 +1316,7 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
               <tr>
                 <th className="l">종목</th>
                 <th className="l">충족한 수급 조건</th>
+                <th className="l">오늘 수급 별</th>
                 <th>유통주식수</th>
                 <th>종가</th>
                 <th>등락률</th>
@@ -1232,6 +1344,7 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
                       ))}
                     </div>
                   </td>
+                  <td className="l"><StarBadges badges={badgeMap[r.symbol]} dense /></td>
                   <td><FloatCell shares={r.floatShares} basis={r.floatBasis} /></td>
                   <td className="num">{num(r.close)}</td>
                   <td className={`num ${(r.changePct ?? 0) >= 0 ? 'up' : 'down'}`}>
@@ -1262,22 +1375,9 @@ function FlowTab({ date, fromDate, catalog, status }: { date: string; fromDate?:
           </table>
         </div>
         <p className="px-4 pb-3 pt-2 text-[11.5px] text-faint">
-          패턴 점수와 과거 적중률은 참고용이에요. 최근 25거래일을 시장 전체 상승분을 빼고 살펴본 결과, 수급과 패턴을 함께 걸어도 뚜렷한 우위가 확인되지 않았어요. 종목 추천이 아니에요.
+          별은 그날 주체별 순매수가 최근 분포에서 상위 2% · 0.5% · 0.2% 안일 때 1 · 2 · 3개예요(텔레그램 알림과 같은 기준). 패턴 점수와 과거 적중률은 참고용이에요. 최근 25거래일을 시장 전체 상승분을 빼고 살펴본 결과, 수급과 패턴을 함께 걸어도 뚜렷한 우위가 확인되지 않았어요. 종목 추천이 아니에요.
         </p>
       </Card>
     </div>
   );
-}
-
-/* ══════════════════════ 2. 패턴분석 ══════════════════════ */
-
-interface PatternRow {
-  symbol: string; name: string; market: string;
-  pattern: string; direction: Direction; kind: string; stage: Stage;
-  score: string; pivot_price: string | null; distance_pct: string | null;
-  breakout_date: string | null; start_date: string | null;
-  close: string | null; traded_value: string | null;
-  evidence: Record<string, unknown>;
-  flow_tags: Array<{ investor_type: string; float_pct: string; on_date: string }>;
-  line_tags: Array<{ signal: string; score: number }>;
 }

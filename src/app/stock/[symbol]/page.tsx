@@ -17,6 +17,7 @@ import {
 } from 'recharts';
 import PriceChart, { PATTERN_KO, type ChartBar, type PatternInfo } from '@/components/PriceChart';
 import SymbolSearch from '@/components/SymbolSearch';
+import { StarBadges, useStarBadges } from '@/components/StarBadges';
 
 interface FlowRow {
   date: string;
@@ -107,6 +108,12 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
   const [data, setData] = useState<Payload | null>(null);
   const [windowDays, setWindowDays] = useState(20);
   const [err, setErr] = useState<string | null>(null);
+  const [homeHref, setHomeHref] = useState('/');
+  useEffect(() => {
+    try { setHomeHref(sessionStorage.getItem('sd-home') || '/'); } catch { /* 기본 주소 */ }
+  }, []);
+  const lastDate = data?.bars.at(-1)?.date ?? '';
+  const badgeMap = useStarBadges(lastDate, useMemo(() => [symbol], [symbol]));
 
   useEffect(() => {
     let alive = true;
@@ -222,7 +229,7 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
       {/* 종목명·시세를 스크롤 내내 붙여 둔다. 아래로 다섯 개 패널이 이어지는데
           지금 어느 종목을 보고 있는지가 화면에서 사라지면 안 된다. */}
       <header className="sticky top-0 z-30 -mx-5 mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-bg/95 px-5 py-2.5 backdrop-blur-sm">
-        <Link href="/" className="btn btn-quiet !px-2 !py-1 !text-[12.5px]">
+        <Link href={homeHref} className="btn btn-quiet !px-2 !py-1 !text-[12.5px]">
           ← 스크리너
         </Link>
         <h1 className="text-[17px] font-semibold tracking-[-0.012em]">{inst.name}</h1>
@@ -241,6 +248,13 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
           <SymbolSearch />
         </div>
       </header>
+
+      {lastDate && Object.values(badgeMap[symbol] ?? {}).some((b) => b.stars > 0 || b.warn) && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="text-[12px] text-faint">{lastDate} 수급 별</span>
+          <StarBadges badges={badgeMap[symbol]} />
+        </div>
+      )}
 
       <section className="panel mb-4 grid grid-cols-2 divide-x divide-line md:grid-cols-4">
         <Stat label="상장주식수" value={num(inst.listed_shares)} />

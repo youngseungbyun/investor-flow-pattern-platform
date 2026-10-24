@@ -15,11 +15,11 @@ import {
   type InsiderLine,
 } from './alertText';
 
-const FLOW_TYPES = ['institution_total', 'private_fund', 'foreign', 'individual', 'handbuy_total'] as const;
+export const FLOW_TYPES = ['institution_total', 'private_fund', 'foreign', 'individual', 'handbuy_total'] as const;
 
-type FlowRow = { symbol: string; t: string; amt: string; pct: string | null; fb: string };
+export type FlowRow = { symbol: string; t: string; amt: string; pct: string | null; fb: string };
 
-function cell(
+export function cell(
   key: StarKey | null,
   tiers: TierTable,
   r: FlowRow | undefined,
