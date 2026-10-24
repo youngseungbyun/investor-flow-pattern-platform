@@ -261,6 +261,7 @@ export default function Dashboard() {
             >
               기간
             </button>
+            <Link href="/alerts" className="btn btn-quiet !px-2.5 !text-[12.5px]">알림 설정</Link>
             <button
               onClick={toggleTheme}
               className="btn btn-quiet !px-2"
@@ -931,6 +932,32 @@ function SymbolCell({ row }: { row: { symbol: string; name: string; market: stri
 
 /* ══════════════════════ 1. 수급분석 ══════════════════════ */
 
+/** 자주 쓰는 수급 조건. 값은 알림의 별 1개 기준(상위 2%)과 같은 선이다. */
+const PRESETS: Array<{ id: string; ko: string; investorType: string; value: number }> = [
+  { id: 'pf', ko: '사모 강한 매수', investorType: 'private_fund', value: 0.3 },
+  { id: 'inst', ko: '기관 강한 매수', investorType: 'institution_total', value: 1.2 },
+  { id: 'hb', ko: '손매수 상위', investorType: 'handbuy_total', value: 1.0 },
+  { id: 'frgn', ko: '외국인 대량 매수', investorType: 'foreign', value: 1.75 },
+];
+
+const presetCond = (p: (typeof PRESETS)[number]): FlowCondition => ({
+  investorType: p.investorType, side: 'buy', metric: 'float_pct', op: '>=', value: p.value,
+  scope: 'recent', windowDays: 5, agg: 'daily_max',
+});
+
+const matchPreset = (r: RuleBody) => {
+  if (r.flow.length !== 1) return null;
+  const f = r.flow[0];
+  return PRESETS.find((p) => p.investorType === f.investorType && f.side === 'buy' && f.metric === 'float_pct'
+    && f.op === '>=' && f.value === p.value && f.scope === 'recent' && f.windowDays === 5 && f.agg === 'daily_max') ?? null;
+};
+
+const STAGE_CHIPS: Array<{ id: Stage; ko: string }> = [
+  { id: 'near_pivot', ko: '돌파선 부근' },
+  { id: 'breakout', ko: '돌파' },
+  { id: 'pullback', ko: '눌림목' },
+];
+
 /** 주소의 조건(r)을 읽는다. 모양이 이상하면 기본값을 쓴다. */
 function readSavedRule(catalog: Catalog): { rule: RuleBody; f: boolean; p: boolean; l: boolean } {
   const base = { rule: { ...catalog.defaultRule } as RuleBody, f: true, p: true, l: false };
@@ -961,6 +988,8 @@ function FlowTab({ date, fromDate, catalog }: { date: string; fromDate?: string;
   const [usePattern, setUsePattern] = useState(saved.p);
   const [useLine, setUseLine] = useState(saved.l);
   const [ranAt, setRanAt] = useState<string | null>(null);
+  // 고급 편집기는 접어 두되, 주소로 들어온 조건이 프리셋과 다르면 펼쳐서 보여 준다.
+  const [adv, setAdv] = useState(() => !!urlParam('r') && !(matchPreset(saved.rule) && saved.f));
 
   const run = useCallback(async () => {
     setLoading(true);
@@ -1087,6 +1116,74 @@ function FlowTab({ date, fromDate, catalog }: { date: string; fromDate?: string;
         }
       >
         <div className="panel-body">
+          <div className="mb-3 space-y-3">
+            <div>
+              <div className="mb-1.5 text-[12px] text-faint">빠른 조건 · 최근 5거래일 중 하루라도, 유통주식수 대비 순매수가 클 때</div>
+              <div className="flex flex-wrap gap-1.5">
+                {PRESETS.map((pr) => {
+                  const on = useFlow && matchPreset(rule)?.id === pr.id;
+                  return (
+                    <button
+                      key={pr.id}
+                      type="button"
+                      className="chip"
+                      data-on={on ? 'true' : 'false'}
+                      aria-pressed={on}
+                      onClick={() => { setRule((r) => ({ ...r, flow: [presetCond(pr)] })); setUseFlow(true); }}
+                    >
+                      {pr.ko}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  className="chip"
+                  data-on={adv || !matchPreset(rule) || !useFlow ? 'true' : 'false'}
+                  onClick={() => setAdv(true)}
+                >
+                  직접 설정
+                </button>
+              </div>
+            </div>
+            <div>
+              <div className="mb-1.5 text-[12px] text-faint">함께 걸기 · 패턴 단계 (고르지 않으면 패턴은 보지 않아요)</div>
+              <div className="flex flex-wrap gap-1.5">
+                {STAGE_CHIPS.map((sc) => {
+                  const on = usePattern && (rule.pattern?.stages ?? []).includes(sc.id);
+                  return (
+                    <button
+                      key={sc.id}
+                      type="button"
+                      className="chip"
+                      data-on={on ? 'true' : 'false'}
+                      aria-pressed={on}
+                      onClick={() => {
+                        const cur = usePattern ? rule.pattern?.stages ?? [] : [];
+                        const next = cur.includes(sc.id) ? cur.filter((x) => x !== sc.id) : [...cur, sc.id];
+                        setRule((r) => ({ ...r, pattern: { ...(r.pattern ?? {}), stages: next } }));
+                        setUsePattern(next.length > 0);
+                      }}
+                    >
+                      {sc.ko}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  className="chip"
+                  data-on={useLine ? 'true' : 'false'}
+                  aria-pressed={useLine}
+                  onClick={() => setUseLine((v) => !v)}
+                >
+                  지지선·눌림 라인
+                </button>
+              </div>
+            </div>
+            <button type="button" className="text-[12.5px] text-mute hover:text-fg" onClick={() => setAdv((v) => !v)} aria-expanded={adv}>
+              {adv ? '고급 조건 접기 ▴' : '고급 조건 열기 ▾ (주체 · 기간 · 임계값 직접 편집)'}
+            </button>
+          </div>
+          <Collapse open={adv}>
           <div className="rail">
           <section className="tile" data-on={useFlow ? 'true' : 'false'}>
             <div className="panel-head">
@@ -1267,6 +1364,7 @@ function FlowTab({ date, fromDate, catalog }: { date: string; fromDate?: string;
             </Collapse>
           </section>
           </div>
+          </Collapse>
 
           {/* 시장·거래대금·정렬은 어느 축을 켜든 항상 걸리는 공통 설정이다.
               라인 카드 안에 두면 라인을 끌 때 같이 접혀 손댈 수 없게 된다. */}
@@ -1310,7 +1408,34 @@ function FlowTab({ date, fromDate, catalog }: { date: string; fromDate?: string;
       </div>
 
       <Card>
-        <div className="scroll-x">
+        {rows && rows.length > 0 && (
+          <div className="space-y-2 p-3 md:hidden">
+            {rows.map((r) => (
+              <div key={r.symbol} className="rounded-xl bg-surface-2 p-3">
+                <div className="flex items-baseline justify-between gap-2">
+                  <div className="min-w-0"><SymbolCell row={r} /></div>
+                  <span className={`num shrink-0 text-[13.5px] font-semibold ${(r.changePct ?? 0) >= 0 ? 'up' : 'down'}`}>
+                    {r.changePct === null ? '-' : signed(r.changePct)}
+                  </span>
+                </div>
+                <div className="num mt-0.5 text-[12px] text-faint">{num(r.close)}원 · 거래대금 {won(r.tradedValue)}</div>
+                <div className="mt-2 empty:hidden"><StarBadges badges={badgeMap[r.symbol]} dense hideEmpty /></div>
+                {r.patterns.length > 0 && <div className="mt-2"><PatternTags patterns={r.patterns.slice(0, 1)} /></div>}
+                <div className="mt-2 flex flex-col gap-0.5">
+                  {r.flows.map((f, j) => (
+                    <span key={j} className="text-[12px] text-mute">
+                      <b className="text-fg">{f.label}</b> <span className="num font-semibold up">{fmtFlow(f.metric, f.value)}</span>
+                      {f.onDate && <span className="num ml-1 text-faint">{f.onDate}</span>}
+                    </span>
+                  ))}
+                  {r.insiderBuys > 0 && <span className="text-[12px] up">내부자 매수 {r.insiderBuys}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {rows?.length === 0 && <div className="p-4 text-[13px] text-faint md:hidden">조건에 맞는 종목이 없어요. 임계값을 낮추거나 단계를 넓혀 보세요.</div>}
+        <div className="scroll-x hidden md:block">
           <table className="tbl min-w-[1300px]">
             <thead>
               <tr>

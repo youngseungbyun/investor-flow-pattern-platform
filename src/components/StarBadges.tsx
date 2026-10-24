@@ -37,14 +37,14 @@ function tip(label: string, b: Badge) {
   return `${label} ${amount}${pct}${tier}`;
 }
 
-export function StarBadges({ badges, dense = false }: { badges?: SymbolBadges; dense?: boolean }) {
+export function StarBadges({ badges, dense = false, hideEmpty = false }: { badges?: SymbolBadges; dense?: boolean; hideEmpty?: boolean }) {
   const items = ORDER.flatMap((k) => {
     const b = badges?.[k];
     if (!b) return [];
     if (k === 'individual' ? b.stars === 0 && !b.warn : b.stars === 0) return [];
     return [{ k, b }];
   });
-  if (items.length === 0) return <span className="text-faint">-</span>;
+  if (items.length === 0) return hideEmpty ? null : <span className="text-faint">-</span>;
   return (
     <div className={`flex flex-wrap ${dense ? 'gap-1' : 'gap-1.5'}`}>
       {items.map(({ k, b }) =>

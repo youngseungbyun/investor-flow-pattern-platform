@@ -288,11 +288,16 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
         />
       </section>
 
-      <HandBuyChart data={data} />
-      <MonthlyFlowPanel data={data} />
+      <Fold id="monthly" title="월별 수급 누적" hint="월 단위로 누가 얼마나 샀는지">
+        <MonthlyFlowPanel data={data} />
+      </Fold>
 
-      <ProgramPanel data={data} />
+      <Fold id="handbuy" title="손매수 · 프로그램매매" hint="프로그램을 뺀 직접 주문 수급">
+        <HandBuyChart data={data} />
+        <ProgramPanel data={data} />
+      </Fold>
 
+      <Fold id="investors" title="투자자별 수급" hint="주체별 일별 순매수와 표">
       <section className="card mb-4">
         <div className="panel-head flex-wrap items-center gap-3">
           <h2 className="panel-title">투자자별 수급</h2>
@@ -410,7 +415,16 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
         )}
       </section>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      </Fold>
+
+      <Fold
+        id="evidence"
+        title="임원 매수 · 패턴 판정 근거"
+        hint={`임원 ${data.insiders.length}건 · 패턴 ${data.patterns.length}건`}
+      >
+      <div className={`grid gap-4 ${data.members.length > 0 ? 'lg:grid-cols-2' : ''}`}>
+        {/* 거래원(증권사 창구) 데이터는 아직 제공하지 않으므로 비어 있으면 패널을 숨긴다. */}
+        {data.members.length > 0 && (
         <section className="card">
           <h2 className="panel-head panel-title">거래원별 (증권사 창구)</h2>
           {data.members.length === 0 ? (
@@ -448,6 +462,7 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
             </table>
           )}
         </section>
+        )}
 
         <section className="card">
           <h2 className="panel-head panel-title">
@@ -521,7 +536,41 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
           </div>
         </section>
       )}
+      </Fold>
     </Shell>
+  );
+}
+
+/**
+ * 접는 패널. 차트와 별 요약은 위에 두고, 나머지는 제목만 보이게 접어 둔다.
+ * 접힌 동안은 내용을 그리지 않아 차트 크기 계산 문제가 없고, 펼침 여부는 이 브라우저에 기억한다.
+ */
+function Fold({ id, title, hint, children }: { id: string; title: string; hint?: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    try { setOpen(localStorage.getItem(`sd-fold:${id}`) === '1'); } catch { /* 기본은 접힘 */ }
+  }, [id]);
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    try { localStorage.setItem(`sd-fold:${id}`, next ? '1' : '0'); } catch { /* 무시 */ }
+  };
+  return (
+    <div className="mb-4">
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-3 rounded-xl bg-surface-2 px-4 py-3 text-left transition-colors hover:bg-[var(--s3)]"
+      >
+        <span className="flex flex-wrap items-baseline gap-x-3">
+          <span className="text-[14px] font-semibold">{title}</span>
+          {hint && <span className="text-[12px] text-faint">{hint}</span>}
+        </span>
+        <span className="text-[12px] text-mute">{open ? '접기 ▴' : '펼치기 ▾'}</span>
+      </button>
+      {open && <div className="mt-3">{children}</div>}
+    </div>
   );
 }
 

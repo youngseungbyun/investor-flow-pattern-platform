@@ -1,0 +1,33 @@
+[
+  {
+    "id": "main",
+    "name": "기본 · 사모 순매수 0.3% 이상(최근 3일) + 상승형 패턴 돌파선 부근·돌파",
+    "rule": {
+      "market": "ALL",
+      "minTradedValue": 1000000000,
+      "flowLogic": "AND",
+      "flow": [
+        { "investorType": "private_fund", "side": "buy", "metric": "float_pct", "op": ">=", "value": 0.3, "scope": "recent", "windowDays": 3, "agg": "daily_max" }
+      ],
+      "pattern": { "patterns": [], "directions": ["bullish"], "stages": ["near_pivot", "breakout"], "minScore": 40, "maxDistancePct": 5 },
+      "limit": 200,
+      "sortBy": "flow"
+    }
+  },
+  {
+    "id": "ref",
+    "name": "참고 후보 · 외국인·기관 둘 다 0.2% 이상(최근 3일) + 상승형 패턴 돌파선 부근·돌파",
+    "rule": {
+      "market": "ALL",
+      "minTradedValue": 1000000000,
+      "flowLogic": "AND",
+      "flow": [
+        { "investorType": "foreign", "side": "buy", "metric": "float_pct", "op": ">=", "value": 0.2, "scope": "recent", "windowDays": 3, "agg": "daily_max" },
+        { "investorType": "institution_total", "side": "buy", "metric": "float_pct", "op": ">=", "value": 0.2, "scope": "recent", "windowDays": 3, "agg": "daily_max" }
+      ],
+      "pattern": { "patterns": [], "directions": ["bullish"], "stages": ["near_pivot", "breakout"], "minScore": 40, "maxDistancePct": 5 },
+      "limit": 200,
+      "sortBy": "flow"
+    }
+  }
+]

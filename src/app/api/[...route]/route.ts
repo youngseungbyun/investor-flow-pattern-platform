@@ -29,6 +29,7 @@ import { DEFAULT_RULE, runRule, type Rule } from '@/domain/rules';
 import { overLimit } from '@/lib/ratelimit';
 import { buildAlert } from '@/domain/alert';
 import { starBadges } from '@/domain/starBadges';
+import { ALERT_FILTER_LINES, ALERT_RULES, alertPreview, describeRule } from '@/domain/alertPreview';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -105,6 +106,12 @@ export async function GET(req: Request, ctx: Ctx) {
         return json(catalogPayload());
       case 'handbuy':
         return cached(await handbuyPayload(q), 60);
+      case 'alert-rules':
+        // 지금 돌고 있는 알림 조건(읽기 전용). 조건 원천은 맥미니 sd-rules.json, 이쪽은 사본이다.
+        return cached({ rules: ALERT_RULES.map((d) => ({ id: d.id, name: d.name, lines: describeRule(d) })), filters: ALERT_FILTER_LINES }, 300);
+      case 'alert-preview':
+        // 오늘 알림 미리보기: 알림 작업과 같은 순서로 걸러 같은 문구를 만든다.
+        return cached(await alertPreview(q.get('date') ?? todayKst()), 120);
       case 'stars': {
         // 웹 화면용 별 배지: ?date=YYYY-MM-DD&symbols=a,b,c (알림과 같은 기준)
         const sdate = q.get('date') ?? todayKst();
